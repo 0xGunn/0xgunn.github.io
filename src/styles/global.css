@@ -74,4 +74,8 @@
   ::file-selector-button {
     @apply border-border outline-ring/50 tracking-tight;
   }
+
+  h3 {
+    text-wrap: auto !important;
+  }
 }

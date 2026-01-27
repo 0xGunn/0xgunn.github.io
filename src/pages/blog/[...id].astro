@@ -1,8 +1,11 @@
 ---
 import Breadcrumbs from '@/components/Breadcrumbs.astro'
+import Comments from '@/components/Comments.astro'
 import Link from '@/components/Link.astro'
+import PasswordGate from '@/components/PasswordGate'
 import PostHead from '@/components/PostHead.astro'
 import PostNavigation from '@/components/PostNavigation.astro'
+import SocialShareBar from '@/components/SocialShareBar.astro'
 import SubpostsHeader from '@/components/SubpostsHeader.astro'
 import SubpostsSidebar from '@/components/SubpostsSidebar.astro'
 import TOCHeader from '@/components/TOCHeader.astro'
@@ -56,6 +59,7 @@ const combinedReadingTime =
     : null
 
 const tocSections = await getTOCSections(currentPostId)
+const isPasswordProtected = !!post.data.password
 ---
 
 <Layout>
@@ -223,9 +227,17 @@ const tocSections = await getTOCSections(currentPostId)
       )
     }
 
-    <article class="prose col-start-2 max-w-none">
-      <Content />
-    </article>
+    {isPasswordProtected ? (
+      <PasswordGate client:load password={post.data.password!} postId={currentPostId}>
+        <article class="prose col-start-2 max-w-none">
+          <Content />
+        </article>
+      </PasswordGate>
+    ) : (
+      <article class="prose col-start-2 max-w-none">
+        <Content />
+      </article>
+    )}
 
     {
       (hasChildPosts || isCurrentSubpost) && (
@@ -243,6 +255,17 @@ const tocSections = await getTOCSections(currentPostId)
       olderPost={navigation.older}
       parentPost={isCurrentSubpost ? navigation.parent : undefined}
     />
+
+    <div class="col-start-2">
+      <SocialShareBar
+        url={`${Astro.site}blog/${currentPostId}`}
+        title={post.data.title}
+      />
+    </div>
+
+    <div class="col-start-2">
+      <Comments />
+    </div>
   </section>
 
   <Button

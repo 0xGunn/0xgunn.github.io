@@ -16,3 +16,11 @@ export type SocialLink = {
 export type IconMap = {
   [key: string]: string
 }
+
+export type CommentConfig = {
+  repo: string
+  repoId: string
+  category: string
+  categoryId: string
+}
+

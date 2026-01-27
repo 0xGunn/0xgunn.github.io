@@ -86,6 +86,17 @@ const subpostCount = !isSubpost(entry.id) ? await getSubpostCount(entry.id) : 0
             </>
           )
         }
+        {
+          entry.data.password && (
+            <>
+              <Separator orientation="vertical" className="h-4!" />
+              <span class="flex items-center gap-1" title="Password protected">
+                <Icon name="lucide:lock" class="size-3" />
+                Protected
+              </span>
+            </>
+          )
+        }
       </div>
 
       {

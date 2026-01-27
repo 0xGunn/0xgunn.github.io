@@ -17,28 +17,34 @@ const projects = await getAllProjects()
     <div class="min-w-full">
       <div class="prose mb-8">
         <p class="mt-0">
-          astro-erudite is an opinionated, unstyled static blogging template
-          that prioritizes simplicity and performance, built with <Link
-            href="https://astro.build"
-            external
-            underline>Astro</Link
-          >, <Link href="https://tailwindcss.com" external underline
-            >Tailwind</Link
-          >, and <Link href="https://ui.shadcn.com" external underline
-            >shadcn/ui</Link
-          >. It provides a clean foundation for your content while being
-          extremely easy to customize.
+          0xGunn's blog focuses on <strong>security</strong> with a strong emphasis
+          on <strong>Blue Team</strong>: SOC fundamentals, threat hunting,
+          detection engineering, introductory malware analysis, incident
+          response, and practical system hardening. The goal is to keep
+          everything hands-on, with checklists, labs, and real-world log
+          examples you can apply immediately.
         </p>
         <p>
-          To learn more about the philosophy behind this template, check out the
-          following blog post: <Link
-            href="/blog/the-state-of-static-blogs"
-            underline>The State of Static Blogs in 2024</Link
+          If you’re getting started, explore the Blog and these core resources:
+          <Link href="https://attack.mitre.org" external underline
+            >MITRE ATT&CK</Link
+          >,
+          <Link href="https://www.splunk.com" external underline>Splunk</Link>,
+          <Link href="https://sigmahq.io" external underline>Sigma</Link>, and <Link
+            href="https://docs.velociraptor.app"
+            external
+            underline>Velociraptor</Link
+          >. Suggested intro post: <Link
+            href="/blog/blue-team-roadmap"
+            underline
+            >Blue Team Roadmap: what to learn and how to build your lab</Link
           >.
         </p>
       </div>
 
-      <h2 class="mb-4 text-2xl font-medium">Example Projects Listing</h2>
+      <h2 class="mb-4 text-2xl font-medium">
+        Featured Projects / Labs / Writeups
+      </h2>
       <div class="flex flex-col gap-4">
         {projects.map((project) => <ProjectCard project={project} />)}
       </div>

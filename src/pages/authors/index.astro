@@ -2,26 +2,94 @@
 import AuthorCard from '@/components/AuthorCard.astro'
 import Breadcrumbs from '@/components/Breadcrumbs.astro'
 import PageHead from '@/components/PageHead.astro'
+import SocialStatus from '@/components/SocialStatus'
 import Layout from '@/layouts/Layout.astro'
 import { getAllAuthors } from '@/lib/data-utils'
 
 const authors = await getAllAuthors()
+const author = authors?.[0]
 ---
 
 <Layout class="max-w-3xl">
   <PageHead slot="head" title="Authors" />
   <Breadcrumbs items={[{ label: 'Authors', icon: 'lucide:users' }]} />
+
   {
     authors.length > 0 ? (
       <ul class="flex flex-col gap-4">
         {authors.map((author) => (
           <li>
             <AuthorCard author={author} />
+            <div class="mt-4">
+              <SocialStatus client:visible />
+            </div>
           </li>
         ))}
       </ul>
     ) : (
       <p class="text-muted-foreground text-center">No authors found.</p>
+    )
+  }
+
+  {/* NEW: Author detail panel (placed BELOW the list) */}
+  {
+    author && (
+      <section class="mt-05">
+        <div class="bg-card rounded-2xl border p-6 shadow-sm">
+          <div class="flex flex-col gap-2">
+            <div class="flex items-baseline justify-between gap-4">
+              <h2 class="text-xl font-semibold tracking-tight">About me</h2>
+              <span class="text-muted-foreground text-xs">
+                {author.data.name}
+              </span>
+            </div>
+
+            <p class="text-muted-foreground leading-relaxed">
+              Hi, my name is{' '}
+              <span class="text-foreground font-medium">Nguyen Viet Tin</span> —
+              aka <span class="text-foreground font-medium">0xGunn</span>. I’m
+              currently studying digital forensics, reverse engineering,
+              open-source intelligence (OSINT), and participating in CTF
+              competitions. Here, I share practical notes, writeups, and lessons
+              learned from these journeys.
+            </p>
+          </div>
+
+          <div class="mt-6 grid gap-6 sm:grid-cols-2">
+            <div class="bg-background/40 rounded-xl border p-4">
+              <h3 class="text-foreground/90 text-sm font-semibold">
+                Focus areas
+              </h3>
+              <ul class="text-muted-foreground mt-3 list-disc space-y-1 pl-5 text-sm">
+                <li>Threat hunting & SOC triage</li>
+                <li>Detection engineering (Sigma / SIEM)</li>
+                <li>Incident response & forensics basics</li>
+                <li>Hardening & security operations</li>
+              </ul>
+            </div>
+
+            <div class="bg-background/40 rounded-xl border p-4">
+              <h3 class="text-foreground/90 text-sm font-semibold">
+                Achievements
+              </h3>
+              <ul class="text-muted-foreground mt-3 space-y-2 text-sm">
+                <li class="flex gap-2">
+                  <span class="bg-foreground/40 mt-[2px] inline-block h-2 w-2 rounded-full" />
+                  <span>
+                    <span class="text-foreground font-medium">Third Prize</span>{' '}
+                    — CyberFest 2025
+                    <span class="text-muted-foreground">
+                      {' '}
+                      (co-organized by DevSecOps Solutions Vietnam and DevPlus
+                      Touch Cyber)
+                    </span>
+                  </span>
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
     )
   }
 </Layout>

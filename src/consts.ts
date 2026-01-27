@@ -1,10 +1,10 @@
-import type { IconMap, SocialLink, Site } from '@/types'
+import type { IconMap, SocialLink, Site, CommentConfig } from '@/types'
 
 export const SITE: Site = {
-  title: 'astro-erudite',
+  title: '0xGunn',
   description:
-    'astro-erudite is a opinionated, unstyled blogging template—built with Astro, Tailwind, and shadcn/ui.',
-  href: 'https://astro-erudite.vercel.app',
+    '0xGunn is a blog about security research, programming, and technology.',
+  href: 'https://0xGunn.vercel.app',
   author: 'jktrn',
   locale: 'en-US',
   featuredPostCount: 2,
@@ -15,6 +15,14 @@ export const NAV_LINKS: SocialLink[] = [
   {
     href: '/blog',
     label: 'blog',
+  },
+  {
+    href: '/tags',
+    label: 'tags',
+  },
+  {
+    href: '/archives',
+    label: 'archives',
   },
   {
     href: '/authors',
@@ -28,15 +36,15 @@ export const NAV_LINKS: SocialLink[] = [
 
 export const SOCIAL_LINKS: SocialLink[] = [
   {
-    href: 'https://github.com/jktrn',
+    href: 'https://github.com/vieTins',
     label: 'GitHub',
   },
   {
-    href: 'https://twitter.com/enscry',
+    href: 'https://x.com/vieTin_',
     label: 'Twitter',
   },
   {
-    href: 'mailto:jason@enscribe.dev',
+    href: 'mailto:nviettin48@gmail.com',
     label: 'Email',
   },
   {
@@ -52,4 +60,11 @@ export const ICON_MAP: IconMap = {
   Twitter: 'lucide:twitter',
   Email: 'lucide:mail',
   RSS: 'lucide:rss',
+}
+
+export const COMMENT: CommentConfig = {
+  repo: 'YOUR_REPO_NAME',
+  repoId: 'YOUR_REPO_ID',
+  category: 'YOUR_CATEGORY_NAME',
+  categoryId: 'YOUR_CATEGORY_ID',
 }

@@ -1,10 +1,10 @@
 ---
-name: 'enscribe'
+name: '0xGunn'
 pronouns: 'he/him'
-avatar: 'https://gravatar.com/avatar/9bfdc4ec972793cf05cb91efce5f4aaaec2a0da1bf4ec34dad0913f1d845faf6.webp?size=256'
-bio: 'd(-_-)b'
-website: 'https://enscribe.dev'
-twitter: 'https://twitter.com/enscry'
-github: 'https://github.com/jktrn'
-mail: 'jason@enscribe.dev'
+avatar: 'https://gravatar.com/userimage/247370179/21b9bf87085d2c1dd8334caf63c88266.jpeg?v=1769335148000&size=256'
+bio: 'Attackers only have to be right once. Defenders have to be right every time...'
+website: 'https://0xGunn.github.io'
+twitter: 'https://x.com/vieTin_'
+github: 'https://github.com/vieTins'
+mail: 'nviettin48@gmail.com'
 ---
