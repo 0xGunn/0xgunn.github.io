@@ -63,8 +63,8 @@ export const ICON_MAP: IconMap = {
 }
 
 export const COMMENT: CommentConfig = {
-  repo: 'YOUR_REPO_NAME',
-  repoId: 'YOUR_REPO_ID',
-  category: 'YOUR_CATEGORY_NAME',
-  categoryId: 'YOUR_CATEGORY_ID',
+  repo: '0xGunn/0xgunn.github.io',
+  repoId: 'R_kgDORCN8oQ',
+  category: 'Comments',
+  categoryId: 'DIC_kwDORCN8oc4C1e84',
 }

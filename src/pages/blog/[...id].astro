@@ -5,7 +5,7 @@ import Link from '@/components/Link.astro'
 import PasswordGate from '@/components/PasswordGate'
 import PostHead from '@/components/PostHead.astro'
 import PostNavigation from '@/components/PostNavigation.astro'
-import SocialShareBar from '@/components/SocialShareBar.astro'
+
 import SubpostsHeader from '@/components/SubpostsHeader.astro'
 import SubpostsSidebar from '@/components/SubpostsSidebar.astro'
 import TOCHeader from '@/components/TOCHeader.astro'
@@ -255,13 +255,6 @@ const isPasswordProtected = !!post.data.password
       olderPost={navigation.older}
       parentPost={isCurrentSubpost ? navigation.parent : undefined}
     />
-
-    <div class="col-start-2">
-      <SocialShareBar
-        url={`${Astro.site}blog/${currentPostId}`}
-        title={post.data.title}
-      />
-    </div>
 
     <div class="col-start-2">
       <Comments />
