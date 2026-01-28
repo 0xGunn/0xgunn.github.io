@@ -128,6 +128,10 @@
       @apply mx-auto my-6;
     }
 
+    :where(img):not(:where(.not-prose, .not-prose *)) {
+      @apply cursor-pointer transition-opacity hover:opacity-90;
+    }
+
     :where(pre):not(:where(.not-prose, .not-prose *)) {
       @apply max-h-[min(68vh,1000px)]! overflow-y-auto [&::-webkit-scrollbar-corner]:hidden;
     }

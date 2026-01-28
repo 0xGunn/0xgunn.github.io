@@ -1,6 +1,7 @@
 ---
 import Breadcrumbs from '@/components/Breadcrumbs.astro'
 import Comments from '@/components/Comments.astro'
+import ImageZoom from '@/components/ImageZoom'
 import Link from '@/components/Link.astro'
 import PasswordGate from '@/components/PasswordGate'
 import PostHead from '@/components/PostHead.astro'
@@ -260,6 +261,8 @@ const isPasswordProtected = !!post.data.password
       <Comments />
     </div>
   </section>
+
+  <ImageZoom client:only="react" />
 
   <Button
     variant="outline"

