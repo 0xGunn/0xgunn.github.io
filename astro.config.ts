@@ -20,6 +20,13 @@ import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
   site: 'https://0xGunn.github.io',
+  image: {
+    service: {
+      entrypoint: './src/lib/sharp-service.ts',
+    },
+    domains: [],
+    remotePatterns: [],
+  },
   integrations: [
     expressiveCode({
       themes: ['github-light', 'github-dark'],
