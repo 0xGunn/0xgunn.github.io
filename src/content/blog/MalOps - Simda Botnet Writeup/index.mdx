@@ -5,7 +5,6 @@ date: 2026-02-04
 tags: ['MalOps', 'Reverse', 'Botnet']
 image: './banner.png'
 authors: ['enscribe']
-password: 'MalOps-26.02.04'
 ---
 
 import Callout from '@/components/Callout.astro'
@@ -243,3 +242,69 @@ Ultimately, we discovered that the first decoded value was a Windows API corresp
 ### Task 6. What is the address of the ret instruction responsible for jumping to decrypted shellcode?
 
 Looking at the function `sub_401130`, we can see the following code logic:
+
+<div class="mx-auto">![Old TOC implementation](assets/task6-1.png)</div>
+
+We see the following suspicious assembly instruction:
+
+```asm {1,5,7,9}
+mov     esp, dword_4CA09C
+mov     edx, edx
+pop     ebp
+mov     edx, edx
+push    dword_4CA0B8
+mov     edx, edx
+push    dword_4CA090
+mov     edx, edx
+mov     ecx, dword_4CA094
+jmp     short loc_401164
+```
+
+Instead of using the current stack, it takes the value at global `dword_4CA09C` and assigns it to `ESP`, after which the stack is moved to a different memory location.
+
+Next, in the `start` function, instead of terminating the program as usual, the address of `sub_401130` is placed in the `eax` register, then pushed onto the stack and the `ret` instruction is executed.
+
+```asm {1,9}
+mov     eax, offset sub_401130
+mov     edi, edi
+mov     ecx, ecx
+mov     edi, edi
+push    eax
+mov     edi, edi
+mov     ecx, ecx
+mov     edi, edi
+retn
+```
+
+Because on the `x86` architecture, the `ret` instruction takes the value at the top of the stack as the jump address (i.e., assigns that value to EIP), this action is equivalent to redirecting the execution thread to `sub_401130`.
+
+This means the `EIP` will be assigned using the shellcode address stored in `dword_4CA094`. So the address of the ret instruction responsible for jumping to decrypted shellcode is `0x401167`.
+
+### Task 7: Based on the memory allocated by the malware, what is the offset of the first instruction executed after decryption? in hex
+
+From question 6, we identified that the address pointing to the start of the decrypted shellcode blob was stored in `dword_4CA094`. Looking at the `start` function, we see that it is formed by adding `dword_4CA0C8` to `0x86ED0`.
+
+```asm {8,9,10}
+loc_4014A0:
+mov     edx, dword_4CA084
+push    edx
+mov     eax, dword_4CA0C8
+push    eax
+call    sub_401000
+add     esp, 8
+mov     ecx, dword_4CA0C8
+add     ecx, 86ED0h
+mov     dword_4CA094, ecx
+mov     edi, edi
+mov     eax, offset sub_401130
+mov     edi, edi
+mov     ecx, ecx
+mov     edi, edi
+push    eax
+mov     edi, edi
+mov     ecx, ecx
+mov     edi, edi
+retn
+```
+
+**Updates are ongoing...**
