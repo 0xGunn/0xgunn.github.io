@@ -129,7 +129,7 @@
     }
 
     :where(img):not(:where(.not-prose, .not-prose *)) {
-      @apply cursor-pointer transition-opacity hover:opacity-90;
+      @apply cursor-pointer;
     }
 
     :where(pre):not(:where(.not-prose, .not-prose *)) {

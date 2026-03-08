@@ -1,0 +1,502 @@
+---
+title: 'MalOps - Kernel Shield Writeup'
+description: 'My writeups for Kernel Shield [Easy] Challenge'
+date: 2026-02-27
+tags: ['MalOps', 'Reverse', 'Kernel Driver']
+image: './banner.png'
+authors: ['enscribe']
+---
+
+## Scenario
+
+Your organization's incident response team has been called in after a devastating ransomware attack encrypted critical servers across the network. During forensic analysis, the team discovered that the ransomware didn't just encrypt files — it first deployed a malicious kernel driver named 'NSecKrnl' to neutralize all endpoint detection and response (EDR) solutions running on the target machines. By operating at the kernel level, the driver was able to intercept process handle operations, strip security tool access rights, and forcefully terminate any protective processes before the ransomware payload executed. Without EDR visibility, the ransomware operated completely undetected. Your task as a malware analyst is to load this kernel driver into IDA Pro and fully reverse engineer its capabilities. Uncover how it initializes, how it evades kernel integrity checks, how it communicates with its usermode ransomware component via IOCTL codes, and how it systematically kills EDR processes. Your findings will be critical to understanding the full attack chain and building detections to prevent future incidents.
+
+## Analysis Process
+
+Analysis Challenge: https://malops.io/challenges/kernel-shield
+
+### Task 1: The driver exposes itself to usermode applications under a specific name. What is this name?
+
+This question is asking for the name of the **“device/symbolic link”** that the driver creates for user-mode applications to access.
+
+```c
+NTSTATUS __stdcall DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
+{
+  _security_init_cookie();
+  return sub_14000114C(DriverObject);
+}
+```
+
+In `DriveEntry`, we see that it passes the entire initialization to the `sub_14000114C` function and returns `NTSTATUS`.
+
+```c {11-17, 20}
+NTSTATUS __fastcall sub_14000114C(PDRIVER_OBJECT DriverObject)
+{
+  NTSTATUS result; // eax
+  NTSTATUS v3; // ebx
+  struct _UNICODE_STRING DestinationString; // [rsp+40h] [rbp-28h] BYREF
+  struct _UNICODE_STRING SymbolicLinkName; // [rsp+50h] [rbp-18h] BYREF
+  PDEVICE_OBJECT DeviceObject; // [rsp+70h] [rbp+8h] BYREF
+
+  *((_DWORD *)DriverObject->DriverSection + 26) |= 0x20u;
+  SpinLock = 0LL;
+  RtlInitUnicodeString(&DestinationString, L"\\Device\\NSecKrnl");
+  RtlInitUnicodeString(&SymbolicLinkName, L"\\DosDevices\\NSecKrnl");
+  DriverObject->MajorFunction[0] = (PDRIVER_DISPATCH)&sub_140001010;
+  DriverObject->MajorFunction[2] = (PDRIVER_DISPATCH)&sub_140001010;
+  DriverObject->MajorFunction[14] = (PDRIVER_DISPATCH)&sub_140001030;
+  DriverObject->DriverUnload = (PDRIVER_UNLOAD)sub_1400010E0;
+  result = IoCreateDevice(DriverObject, 0, &DestinationString, 0x22u, 0, 0, &DeviceObject);
+  if ( result >= 0 )
+  {
+    v3 = IoCreateSymbolicLink(&SymbolicLinkName, &DestinationString);
+    if ( v3 >= 0 )
+    {
+      byte_140003010 = PsSetCreateProcessNotifyRoutine(NotifyRoutine, 0) >= 0;
+      byte_140003011 = PsSetLoadImageNotifyRoutine(guard_check_icall_nop) >= 0;
+      sub_140001518();
+    }
+    else
+    {
+      IoDeleteDevice(DeviceObject);
+    }
+    return v3;
+  }
+  return result;
+}
+```
+
+It initializes the device object name (`\\Device\\NSecKrnl`) in the kernel and a symbolic link (`\\DosDevices\\NSecKrnl`) for user-mode access. So the answer here is `NSecKrnl`.
+
+Next, we see the registration of the **IRP handling functions** (requests sent to the driver) taking place.
+
+```c
+DriverObject->MajorFunction[0]  = sub_140001010;
+DriverObject->MajorFunction[2]  = sub_140001010;
+DriverObject->MajorFunction[14] = sub_140001030;
+DriverObject->DriverUnload      = sub_1400010E0;
+```
+
+The following important types of IRP:
+
+- `MajorFunction[0] = IRP_MJ_CREATE`: when user-mode “opens” the driver device.
+- `MajorFunction[2] = IRP_MJ_CLOSE`: when handle closed.
+- `MajorFunction[14] = IRP_MJ_DEVICE_CONTROL`: when user-mode sends a control command (IOCTL) to the driver.
+- `DriverUnload`: This function is called when the driver is unloaded.
+
+Finally, create the device and symbolic link using the `IoCreateDevice` and `IoCreateSymbolicLink` functions.
+
+### Task 2: During initialization, the driver tampers with its own loader entry to bypass a kernel security check. What hex value is OR'd into that field?
+
+At the beginning of the driver's main constructor function, it executes the following line of code:
+
+```c
+*((_DWORD *)DriverObject->DriverSection + 26) |= 0x20u;
+```
+
+The driver uses the `DriverObject->DriverSection` pointer to access the `LDR_DATA_TABLE_ENTRY` struct, then navigates to the `Flags` field (at offset `0x68`) and sets flag `0x20` using the **OR operation**.
+
+### Task 3: At what byte offset from the base of the loader data table entry does this tampering occur?
+
+As we have analyzed, the Flag field is located at offset `0x68` in `LDR_DATA_TABLE_ENTRY`. You can read more [here](https://www.geoffchappell.com/studies/windows/km/ntoskrnl/inc/api/ntldr/ldr_data_table_entry/index.htm?tx=172).
+
+### Task 4: One of the IOCTL codes handled by the dispatch function leads to forced process termination. What is this code in hex?
+
+`sub_140001030` is a function that handles the driver's control commands.
+
+```c {9,16,22,30}
+__int64 __fastcall sub_140001030(__int64 a1, IRP *a2)
+{
+  struct _IRP *MasterIrp; // r9
+  unsigned int v4; // edi
+  char v5; // al
+
+  MasterIrp = a2->AssociatedIrp.MasterIrp;
+  v4 = -1073741823;
+  if ( a2->Tail.Overlay.CurrentStackLocation->Parameters.Read.ByteOffset.LowPart == 2246868 )
+  {
+    if ( MasterIrp && (unsigned __int8)sub_1400012B8(*(_QWORD *)&MasterIrp->Type) )
+      v4 = 0;
+  }
+  else
+  {
+    if ( a2->Tail.Overlay.CurrentStackLocation->Parameters.Read.ByteOffset.LowPart == 2246872 )
+    {
+      if ( !MasterIrp )
+        goto LABEL_16;
+      v5 = sub_140001614(*(_QWORD *)&MasterIrp->Type);
+    }
+    else if ( a2->Tail.Overlay.CurrentStackLocation->Parameters.Read.ByteOffset.LowPart == 2246876 )
+    {
+      if ( !MasterIrp )
+        goto LABEL_16;
+      v5 = sub_140001240(*(_QWORD *)&MasterIrp->Type);
+    }
+    else
+    {
+      if ( a2->Tail.Overlay.CurrentStackLocation->Parameters.Read.ByteOffset.LowPart != 2246880 || !MasterIrp )
+        goto LABEL_16;
+      v5 = sub_1400013E8(*(_QWORD *)&MasterIrp->Type);
+    }
+    if ( v5 )
+      v4 = 0;
+  }
+LABEL_16:
+  a2->IoStatus.Status = v4;
+  IofCompleteRequest(a2, 0);
+  return v4;
+}
+```
+
+This function receives **4 IOCTL codes**. Each code calls a different handler. The corresponding values ​​are as follows:
+
+- `sub_1400012B8` handles IOCTL `0x2248D4`
+- `sub_140001614` handles IOCTL `0x2248D8`
+- `sub_140001240` handles IOCTL `0x2248DC`
+- `sub_1400013E8` handles IOCTL `0x2248E0`
+
+Delving deeper into the function `sub_1400013E8`, we obtain the following pseudocode:
+
+```c {11}
+char __fastcall sub_1400013E8(void *a1)
+{
+  HANDLE ProcessHandle; // [rsp+58h] [rbp+10h] BYREF
+  PEPROCESS Process; // [rsp+60h] [rbp+18h] BYREF
+
+  Process = 0LL;
+  ProcessHandle = 0LL;
+  if ( PsLookupProcessByProcessId(a1, &Process) >= 0
+    && ObOpenObjectByPointer(Process, 0x200u, 0LL, 1u, (POBJECT_TYPE)PsProcessType, 0, &ProcessHandle) >= 0 )
+  {
+    ZwTerminateProcess(ProcessHandle, 0);
+    ZwClose(ProcessHandle);
+  }
+  if ( Process )
+    ObfDereferenceObject(Process);
+  return 0;
+}
+```
+
+The function takes the parameter `a1`, which is the PID retrieved from the IOCTL buffer. It uses `PsLookupProcessByProcessId` to find the process by PID and returns a kernel pointer `PERPROCESS`.
+
+Next, it uses `ObOpenObjectByPointer` to open a handle to the process object with the `PROCESS_TERMINATE` privilege. Finally, it uses `ZwTerminateProcess` to force termination of the process using the opened handle.
+
+### Task 5: When the dispatch function receives an unrecognized IOCTL or a NULL input buffer, it returns a specific NTSTATUS code. What is it in hex?
+
+In `sub_140001030`, the `v4` variable is set to `-1073741823` by default. This value is the `NTSTATUS` that will be returned when IOCTL does not match any cases, or the input buffer is NULL.
+
+Converting to hex, we get the answer `0xC0000001` (`STATUS_UNSUCCESSFUL`).
+
+### Task 6: The driver maintains internal tracking arrays with a fixed capacity. How many entries can each array hold?
+
+For this question, I checked the contents of the `.data` section because that's the only writable part in the PE file.
+
+```asm
+.data:0000000140003030 ; _QWORD qword_140003030[1024]
+.data:0000000140003030 qword_140003030 dq 3Ah dup(0), 3C6h dup(?)
+.data:0000000140003030                                         ; DATA XREF: sub_1400012B8+21↑o
+.data:0000000140003030                                         ; sub_14000138C+23↑o ...
+.data:0000000140005030 ; _QWORD qword_140005030[1024]
+```
+
+Inside this section we can see huge arrays, filled with NULL bytes. The size of these arrays is `8192` bytes (starts at `0x140003030` and ends at `0x140005030`). Dividing it with `8` bytes (size of a QWORD) returns `1024` entries that can be stored.
+
+### Task 7: The driver registers a kernel callback to intercept handle operations at a specific altitude. What is this altitude number?
+
+In the Import tab of IDA, we can see that it imports the [ObRegisterCallbacks](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-obregistercallbacks) API.
+
+> It's an API function in the Windows kernel that allows drivers to register "Object Manager callbacks"—that is, register functions that Windows automatically calls whenever there's an operation involving the handle of certain object types (usually Process and Thread).
+
+We see it is referenced in the function `sub_140001518`.
+
+```c {14,17}
+NTSTATUS sub_140001518()
+{
+  NTSTATUS result; // eax
+  PVOID v1; // rcx
+  _QWORD v2[4]; // [rsp+20h] [rbp-50h] BYREF
+  _OB_CALLBACK_REGISTRATION CallbackRegistration; // [rsp+40h] [rbp-30h] BYREF
+
+  v2[0] = PsProcessType;
+  v2[1] = 3LL;
+  v2[2] = sub_1400014B0;
+  memset(&CallbackRegistration, 0, sizeof(CallbackRegistration));
+  v2[3] = 0LL;
+  *(_DWORD *)&CallbackRegistration.Version = 65792;
+  RtlInitUnicodeString(&CallbackRegistration.Altitude, L"328987");
+  CallbackRegistration.RegistrationContext = 0LL;
+  CallbackRegistration.OperationRegistration = (OB_OPERATION_REGISTRATION *)v2;
+  result = ObRegisterCallbacks(&CallbackRegistration, &RegistrationHandle);
+  v1 = RegistrationHandle;
+  if ( result < 0 )
+    v1 = 0LL;
+  RegistrationHandle = v1;
+  return result;
+}
+```
+
+This function registers the **Object Manager callback** at altitude "`328987`" to intercept the creation or cloning of the handle to the Process, using the pre-callback `sub_1400014B0`, and saves the registered handle to the `RegistrationHandle`.
+
+### Task 8: When the driver opens a handle to a process it is about to forcefully terminate, what handleattribute value (hex) does it request?
+
+To answer this question, we will re-analyze the `sub_1400013E8` function:
+
+```c {9}
+char __fastcall sub_1400013E8(void *a1)
+{
+  HANDLE ProcessHandle; // [rsp+58h] [rbp+10h] BYREF
+  PEPROCESS Process; // [rsp+60h] [rbp+18h] BYREF
+
+  Process = 0LL;
+  ProcessHandle = 0LL;
+  if ( PsLookupProcessByProcessId(a1, &Process) >= 0
+    && ObOpenObjectByPointer(Process, 0x200u, 0LL, 1u, (POBJECT_TYPE)PsProcessType, 0, &ProcessHandle) >= 0 )
+  {
+    ZwTerminateProcess(ProcessHandle, 0);
+    ZwClose(ProcessHandle);
+  }
+  if ( Process )
+    ObfDereferenceObject(Process);
+  return 0;
+}
+```
+
+We see that the second parameter of the `ObOpenObjectByPointer` function is `HandleAttributes`. Its value is `0x200`. This value corresponds to `OBJ_KERNEL_HANDLE` (the handle is only used in the kernel and is not exposed to user-mode).
+
+### Task 9: What is the PDB filename embedded in the binary?
+
+For this question, we can simply perform static analysis using the `strings` command:
+
+```shell
+$ strings driver_challenge | grep ".pdb"
+D:\NSecsoft\NSec\NSEC-Client-Kernel\Drivers\NSecKrnl\NSecKrnl\bin\NSecKrnl64.pdb
+```
+
+### Task 10: The driver creates its device object with a specific device type constant. What is this value in hex?
+
+Let's go back to the `sub_14000114C` function:
+
+```c {17}
+NTSTATUS __fastcall sub_14000114C(PDRIVER_OBJECT DriverObject)
+{
+  NTSTATUS result; // eax
+  NTSTATUS v3; // ebx
+  struct _UNICODE_STRING DestinationString; // [rsp+40h] [rbp-28h] BYREF
+  struct _UNICODE_STRING SymbolicLinkName; // [rsp+50h] [rbp-18h] BYREF
+  PDEVICE_OBJECT DeviceObject; // [rsp+70h] [rbp+8h] BYREF
+
+  *((_DWORD *)DriverObject->DriverSection + 26) |= 0x20u;
+  SpinLock = 0LL;
+  RtlInitUnicodeString(&DestinationString, L"\\Device\\NSecKrnl");
+  RtlInitUnicodeString(&SymbolicLinkName, L"\\DosDevices\\NSecKrnl");
+  DriverObject->MajorFunction[0] = (PDRIVER_DISPATCH)&sub_140001010;
+  DriverObject->MajorFunction[2] = (PDRIVER_DISPATCH)&sub_140001010;
+  DriverObject->MajorFunction[14] = (PDRIVER_DISPATCH)&sub_140001030;
+  DriverObject->DriverUnload = (PDRIVER_UNLOAD)sub_1400010E0;
+  result = IoCreateDevice(DriverObject, 0, &DestinationString, 0x22u, 0, 0, &DeviceObject);
+  if ( result >= 0 )
+  {
+    v3 = IoCreateSymbolicLink(&SymbolicLinkName, &DestinationString);
+    if ( v3 >= 0 )
+    {
+      byte_140003010 = PsSetCreateProcessNotifyRoutine(NotifyRoutine, 0) >= 0;
+      byte_140003011 = PsSetLoadImageNotifyRoutine(guard_check_icall_nop) >= 0;
+      sub_140001518();
+    }
+    else
+    {
+      IoDeleteDevice(DeviceObject);
+    }
+    return v3;
+  }
+  return result;
+}
+```
+
+The fourth parameter of `IoCreateDevice` is `DeviceType`. Its value here is `0x22`, which corresponds to `FILE_DEVICE_UNKNOWN` (commonly used for "customizable" IOCTL drivers).
+
+### Task 11: All four IOCTL codes are evenly spaced. What is the stride (difference) between consecutive codes?
+
+As analyzed in task 4, we see that it will increase by `0x4`.
+
+```c
+2246868 = 0x2248D4
+
+2246872 = 0x2248D8
+
+2246876 = 0x2248DC
+
+2246880 = 0x2248E0
+```
+
+### Task 12: Before the handle interception callback checks its internal tables, it performs a self-check to avoid interfering when a process operates on itself. What kernel API provides the current process pointer for this comparison?
+
+As we analyzed earlier, the `sub_140001518` function registers the **Object Callback** using `ObRegisterCallbacks`. And the `sub_1400014B0` function is the PreOperation callback.
+
+```c {14}
+__int64 __fastcall sub_1400014B0(__int64 a1, __int64 a2)
+{
+  struct _KPROCESS *v3; // rdi
+  HANDLE ProcessId; // rax
+  HANDLE CurrentProcessId; // rax
+
+  if ( a2 )
+  {
+    v3 = *(struct _KPROCESS **)(a2 + 8);
+    if ( v3 )
+    {
+      if ( *(_QWORD *)(a2 + 32) )
+      {
+        if ( IoGetCurrentProcess() != v3 )
+        {
+          ProcessId = PsGetProcessId(v3);
+          if ( (unsigned __int8)sub_14000138C(ProcessId) )
+          {
+            CurrentProcessId = PsGetCurrentProcessId();
+            if ( !(unsigned __int8)sub_140001330(CurrentProcessId) )
+              **(_DWORD **)(a2 + 32) &= ~1u;
+          }
+        }
+      }
+    }
+  }
+  return 0LL;
+}
+```
+
+The function uses `IoGetCurrentProcess` to retrieve the current process and check it itself.
+
+### Task 13: After unregistering the handle interception callback during driver teardown, the registration handle global is set to a specific value. What is it?
+
+We already know that the `sub_140001518` function uses `ObRegisterCallbacks` to register a callback and `RegistrationHandle` variable is the handle that Windows returns.
+
+```c
+ObRegisterCallbacks(&CallbackRegistration, &RegistrationHandle)
+```
+
+Upon searching for references to this variable, we find that it is used in the function `sub_140001674`.
+
+```c
+if (RegistrationHandle)
+{
+  ObUnRegisterCallbacks(RegistrationHandle);
+  RegistrationHandle = 0LL;
+}
+return 0;
+```
+
+This is the cleanup for the callback blocking registration handling using `ObRegisterCallbacks` above. It assigns `RegistrationHandle = 0` to mark it as **unregistered**.
+
+### Task 14: The handle interception monitors two types of operations simultaneously. What is the combined flag value (decimal) in the operation registration structure?
+
+Returning to function `sub_140001518`, we see that the Operations field in `OB_OPERATION_REGISTRATION` of `ObRegisterCallbacks` is set to `3`.
+
+```c {9}
+NTSTATUS sub_140001518()
+{
+  NTSTATUS result; // eax
+  PVOID v1; // rcx
+  _QWORD v2[4]; // [rsp+20h] [rbp-50h] BYREF
+  _OB_CALLBACK_REGISTRATION CallbackRegistration; // [rsp+40h] [rbp-30h] BYREF
+
+  v2[0] = PsProcessType;
+  v2[1] = 3LL;
+  v2[2] = sub_1400014B0;
+  memset(&CallbackRegistration, 0, sizeof(CallbackRegistration));
+  v2[3] = 0LL;
+  *(_DWORD *)&CallbackRegistration.Version = 65792;
+  RtlInitUnicodeString(&CallbackRegistration.Altitude, L"328987");
+  CallbackRegistration.RegistrationContext = 0LL;
+  CallbackRegistration.OperationRegistration = (OB_OPERATION_REGISTRATION *)v2;
+  result = ObRegisterCallbacks(&CallbackRegistration, &RegistrationHandle);
+  v1 = RegistrationHandle;
+  if ( result < 0 )
+    v1 = 0LL;
+  RegistrationHandle = v1;
+  return result;
+}
+```
+
+This function tracks the following two operations:
+
+```c
+OB_OPERATION_HANDLE_CREATE = 1
+OB_OPERATION_HANDLE_DUPLICATE = 2
+```
+
+When monitoring both simultaneously, the driver will `OR` the two flags:
+
+$$
+1 \lor 2 = 3
+$$
+
+### Task 15: The termination function must release a reference on the process object before returning. What kernel API performs this dereferencing?
+
+Go back to the function that performs the terminate process, which is `sub_1400013E8`.
+
+```c {15}
+char __fastcall sub_1400013E8(void *a1)
+{
+  HANDLE ProcessHandle; // [rsp+58h] [rbp+10h] BYREF
+  PEPROCESS Process; // [rsp+60h] [rbp+18h] BYREF
+
+  Process = 0LL;
+  ProcessHandle = 0LL;
+  if ( PsLookupProcessByProcessId(a1, &Process) >= 0
+    && ObOpenObjectByPointer(Process, 0x200u, 0LL, 1u, (POBJECT_TYPE)PsProcessType, 0, &ProcessHandle) >= 0 )
+  {
+    ZwTerminateProcess(ProcessHandle, 0);
+    ZwClose(ProcessHandle);
+  }
+  if ( Process )
+    ObfDereferenceObject(Process);
+  return 0;
+}
+```
+
+When we successfully call `PsLookupProcessByProcessId(pid, &Process)`, Windows will return a process object pointer (`PEPROCESS`) and simultaneously increment the reference count of that object (i.e., "hold" the object, preventing it from being released prematurely).
+
+Therefore, before the function returns, the driver must dereference the reference to avoid reference leaks.
+
+### Task 16: During initialization, the driver registers a notification callback for image loading events. The function registered for this purpose is unusually small. What is its size in bytes (hex)?
+
+Let’s go back to the `sub_14000114C` function:
+
+```c
+  byte_140003011 = PsSetLoadImageNotifyRoutine(guard_check_icall_nop) >= 0;
+```
+
+The driver registers the `guard_check_icall_nop` function as a callback for image loading.
+
+```asm
+.text:0000000140001000 ; void __fastcall guard_check_icall_nop(PUNICODE_STRING FullImageName, HANDLE ProcessId, PIMAGE_INFO ImageInfo)
+.text:0000000140001000 _guard_check_icall_nop proc near        ; DATA XREF: sub_1400010E0+13↓o
+.text:0000000140001000                                         ; sub_14000114C+CA↓o ...
+.text:0000000140001000                 retn    0
+.text:0000000140001000 _guard_check_icall_nop endp
+.text:0000000140001000
+.text:0000000140001000 ;
+```
+
+We see that `retn 0` corresponds to opcode `C2 00 00`. Therefore, the answer will be `3` bytes.
+
+### Task 17: The address of the function that the driver assigns as its DriverUnload handler is what?
+
+In the `DriverEntry` code, we have the following line:
+
+```c
+DriverObject->DriverUnload = (PDRIVER_UNLOAD)sub_1400010E0;
+```
+
+So the address of the function will be `0x1400010E0`.
+
+## Conclusion
+
+The **NSecKrnl** kernel driver is a sophisticated malware that demonstrates advanced kernel-level exploitation. Through reverse engineering, we've uncovered its core capabilities:
+
+- **EDR Killing**: Terminating security processes via IOCTL `0x2248E0` before ransomware execution
+- **Kernel Stealth**: Manipulating loader flags (`0x20`) to evade integrity checks
+- **Handle Interception**: Monitoring process operations through Object Manager callbacks to suppress security operations
+- **Kernel API Mastery**: Using `IoGetCurrentProcess()`, `ObOpenObjectByPointer()`, and `ZwTerminateProcess()` to achieve its goals
+
+This driver serves as an effective first-stage attack, eliminating defenses and creating an unmonitored environment for the ransomware payload. Organizations should prioritize kernel patch management, secure boot enforcement, and Memory Integrity (Core Isolation) to defend against such kernel-level threats.
