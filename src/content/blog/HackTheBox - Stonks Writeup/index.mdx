@@ -1,0 +1,228 @@
+---
+title: 'HackTheBox - Stonks Writeup'
+description: 'My writeups for Stonks [Insane] Sherlock Challenge'
+date: 2026-06-04
+tags: ['HackTheBox']
+image: './banner.png'
+authors: ['enscribe']
+password: 'HackTheBox-26.06.04'
+---
+
+import Callout from '@/components/Callout.astro'
+import { Icon } from 'astro-icon/components'
+
+## Sherlock Scenario
+
+A major real estate and development corporation is under investigation for large-scale financial fraud. The company allegedly inflated revenues and concealed massive debt in order to secure bank loans and push through a stock exchange listing. Public reports painted a picture of strong growth, but the truth tells otherwise. Law enforcement has seized a corporate server believed to store critical documents. However, investigators suspect that the original financial statements reflecting the company’s real losses were deleted in an attempt to cover up the fraud. As a digital forensics specialist, your mission is to recover the missing file and bring the hidden truth to light.
+
+## Analysis Process
+
+I started with a `.ad1` file provided by HackTheBox, and my task was to complete fifteen questions. Let's begin with the first question.
+
+### Task 1: When was the Windows Data Deduplication feature first installed on the system?
+
+**Windows Data Deduplication** is a Windows Server feature that helps reduce storage space by eliminating duplicate data on the hard drive.
+
+To find the time when the server installed Windows Data Deduplication, we need to focus on `System.evtx`. Because when a Windows feature installs a new service/driver into the system, Windows typically logs an event in **Service Control Manager**.
+
+And with this log file, we will filter with event ID **7045 - A service was installed in the system**. In `System.evtx`, Event ID `7045` shows that the “Data Deduplication Service” was installed with the image path:
+
+```shell
+%SystemRoot%\system32\svchost -k ddpsvc
+```
+
+The timestamp of this event is `2025-09-18 09:56:40` UTC.
+
+### Task 2: How many bytes of disk space were saved after the first optimization job was completed by Data Deduplication?
+
+To answer this question, we will rely on the log file:
+
+```shell
+Microsoft-Windows-Deduplication%4Operational.evtx
+```
+
+We will see that the first Data Deduplication optimization job completed on `2025-09-18 10:11:07` UTC and saved `6,805,707` bytes of disk space.
+
+### Task 3: When was Data Deduplication most recently re-enabled on volume D:?
+
+Volume `D:` contains the following folder:
+
+```shell
+D:\System Volume Information\Dedup\Settings
+```
+
+This folder contains the configuration files for Data Dedup.
+
+```shell
+dedupConfig.01.xml
+dedupConfig.02.xml
+```
+
+When Data Deduplication is disabled and then re-enabled on a volume, the Dedup configuration is updated. Therefore, the timestamps in these files reflect the time when Dedup was most recently re-enabled. In the XML file there is field:
+
+```xml
+<property name='changeTime' type='VT_UI8' value='134028128759740533'>
+```
+
+Converting to UTC, we get the answer: `2025-09-20 03:34:35.974054 UTC`.
+
+### Task 4: List all file extensions that are not optimized by Data Deduplication in alphabetical order.
+
+I examined the Data Deduplication configuration files from:
+
+```shell
+D:\System Volume Information\Dedup\Settings
+```
+
+The files `dedupConfig.01.xml` and `dedupConfig.02.xml` contain two relevant properties:
+
+```shell
+excludeFileExtensions = mp4|avi|iso|bak|tif
+excludeFileExtensionsDefault = edb|jrs
+```
+
+These fields list the file extensions excluded from Data Deduplication optimization. After combining both lists and sorting alphabetically, the excluded extensions are:
+
+```shell
+avi,bak,edb,iso,jrs,mp4,tif
+```
+
+### Task 5: How many files have been optimized by Data Deduplication?
+
+I examined `Microsoft-Windows-Deduplication%4Operational.evtx` and searched for Event ID `6153`, which records completed Data Deduplication jobs.
+
+The completed optimization event for volume `D:` contains the field OptimizedFileCount with the value `168`. Therefore, the number of files optimized by Data Deduplication is `168`.
+
+### Task 6: When is the next Throughput Optimisation job scheduled to run?
+
+I examined the scheduled task located at:
+
+```shell
+C:\Windows\System32\Tasks\Microsoft\Windows\Deduplication\ThroughputOptimization
+```
+
+The task XML shows a CalendarTrigger with StartBoundary set to `2025-09-20T06:50:00`. The task is configured to run weekly on **Thursday** with WeeksInterval set to 1.
+
+```xml
+<CalendarTrigger>
+  <StartBoundary>2025-09-20T06:50:00</StartBoundary>
+  <Enabled>true</Enabled>
+  <ScheduleByWeek>
+    <DaysOfWeek>
+      <Thursday />
+    </DaysOfWeek>
+    <WeeksInterval>1</WeeksInterval>
+  </ScheduleByWeek>
+</CalendarTrigger>
+```
+
+Since `2025-09-20` was a Saturday, the next valid Thursday run after that date is `2025-09-25` at `06:50:00`. Therefore, the next Throughput Optimisation job was scheduled to run at `2025-09-25 06:50:00`.
+
+### Task 7: What is the name of the financial report that was recently deleted in an attempt to cover up criminal activity?
+
+I examined the NTFS USN Journal from the Data volume: `$Extend\$J`. USN records with the **FILE_DELETE** reason were searched for **financial/report-related filenames**. The relevant deleted file was:
+
+```shell
+Internal_Consolidated_Financial_Statements_2024.docx
+```
+
+It was deleted at `2025-09-16 16:10:09 UTC` with the reason **FILE_DELETE | CLOSE**.
+
+### Task 8: What is the MFT entry number of that report file?
+
+I parsed the `$MFT` from the Data partition and searched for the deleted report file identified earlier. The file was found as:
+
+```shell
+Finance\Reports\Annual\2024\Internal Consolidated Financial Statements 2024.docx
+```
+
+Its MFT record showed Entry Number `46`. The record flags were `0x0`, indicating the file was deleted.
+
+### Task 9: List all the FILE_ATTRIBUTE flags that are set on the report file. Submit answer in ascending order based on the hex value of each flag.
+
+I inspected MFT entry 46 for the deleted report file:
+
+```shell
+Finance\Reports\Annual\2024\Internal Consolidated Financial Statements 2024.docx
+```
+
+In the `$STANDARD_INFORMATION` attribute, the FileAttributes value was `0x620`. Breaking down `0x620` gives `0x20`, `0x200`, and `0x400`. Sorted by hex value, the flags are:
+
+```shell
+FILE_ATTRIBUTE_ARCHIVE, FILE_ATTRIBUTE_SPARSE_FILE, FILE_ATTRIBUTE_REPARSE_POINT
+```
+
+### Task 10: At what offset in the `$MFT` file does the `$REPARSE_POINT` attribute of the report begin?
+
+I inspected MFT entry `46` for the report file. The MFT record starts at offset `0x0000B800` because each MFT record is `1024` bytes.
+
+Inside that record, the `$REPARSE_POINT` attribute, type `0xC0`, begins at relative offset `0x1B0`. Therefore, its absolute offset in the `$MFT` file is:
+
+```shell
+ 0x0000B800 + 0x1B0 = 0x0000B9B0
+```
+
+### Task 11: After the report was optimized by Data Deduplication, into how many chunks was its data divided?
+
+I inspected the `$REPARSE_POINT` attribute of MFT entry 46, which belongs to the deleted report file. The reparse tag was `0x80000013`, identifying it as a **Data Deduplication** reparse point.
+
+Inside the Dedup reparse data, the chunk map size was `0x88`. The chunk map contains an 8-byte header and each chunk entry is `0x40` bytes. Therefore:
+
+```shell
+(0x88 - 0x08) / 0x40 = 2
+```
+
+So the report data was divided into `2` chunks.
+
+### Task 12: What is the data length in bytes of the first deduplicated chunk belonging to the report file under investigation?
+
+I examined the **Dedup ChunkStore** under **System Volume Information**. The deleted report was represented by a **Data Deduplication** reparse point in MFT entry 46, so its real data was stored as chunks in the Dedup ChunkStore.
+
+In `Stream\00010000.00000001.ccc`, the chunk map for the report listed two chunks. The first chunk had Chunk ID 7, data offset `0x0006CE20`, and data length `0x0000EEA7`. Converting `0xEEA7` to decimal gives `61095` bytes.
+
+### Task 13: After recovering the file, provide the SHA-256 hash of the recovered financial report.
+
+The deleted report was a Data Deduplication reparse point, so its content was stored in the Dedup ChunkStore instead of directly in the MFT record.
+
+I used the chunk map from `Stream\00010000.00000001.ccc` to identify the two chunks belonging to the report. The chunks were stored in `Data\00000001.00000001.ccc` at offsets `0x0006CE20` and `0x0007BD20`.
+
+Each chunk had a Ckhr header of `0x58` bytes, so I extracted the actual data after the header and concatenated both chunks in order. The recovered DOCX was `90593` bytes. The SHA-256 hash of the recovered file was:
+
+```shell
+e51e773e5404f29cc2816cff3fbdcc8b2c28f9e8040a6e7fe926b21336b66513
+```
+
+### Task 14: The person who drafted this report must also be held legally accountable. What is their Full name?
+
+I inspected the metadata of the recovered **DOCX** file. In `docProps/core.xml`:
+
+```xml
+<dc:creator>Elaine Chua - Senior Accountant</dc:creator>
+<cp:lastModifiedBy>Elaine Chua - Senior Accountant</cp:lastModifiedBy>
+```
+
+Therefore, the drafter’s full name is **Elaine Chua**.
+
+### Task 15: How much was the profit for the year overstated in the audited report compared to the actual one?
+
+I recovered the internal financial report and compared its Profit for the year against the audited report. The audited report showed Profit for the year as `2,672,196`, while the actual/internal report showed `-1,647,555`.
+
+Therefore, the audited report overstated profit by `2,672,196 - (-1,647,555) = 4,319,751`.
+
+## Conclusion
+
+This Sherlock challenge demonstrates the critical importance of digital forensics in uncovering financial fraud. Through systematic analysis of Windows Event Logs, NTFS file system artifacts, and Data Deduplication metadata, we successfully recovered a deliberately deleted financial report that concealed massive fraud.
+
+The investigation revealed several key forensic artifacts:
+
+- **Event Log Analysis**: System event logs provided timestamps for when the Data Deduplication feature was installed and when optimization jobs completed, establishing a timeline of events.
+
+- **NTFS Metadata Analysis**: The USN Journal captured file deletion records, while the MFT entries preserved evidence of the deleted report file and its attributes, even after the file content was removed.
+
+- **Data Deduplication Reparse Points**: The reparse point attribute was instrumental in recovering the file content. Instead of directly deleting the file data, it was stored as deduplicated chunks, which remained recoverable in the ChunkStore.
+
+The recovered report exposed a devastating overstatement of **4,319,751** in annual profit—transforming what should have been a significant loss into a reported gain. This comprehensive fraud scheme involved both the falsification of financial statements and the attempted destruction of evidence through file deletion.
+
+This challenge highlights the resilience of NTFS file systems and the traces left behind by Windows features. Even when attackers attempt to cover their tracks, proper forensic investigation can uncover the truth and bring perpetrators to justice.
+
+<div class="mx-auto">![Old TOC implementation](assets/suc.png)</div>
