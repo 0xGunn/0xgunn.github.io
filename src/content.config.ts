@@ -30,6 +30,7 @@ const authors = defineCollection({
     github: z.string().url().optional(),
     linkedin: z.string().url().optional(),
     discord: z.string().url().optional(),
+    discordId: z.string().regex(/^\d+$/).optional(),
   }),
 })
 

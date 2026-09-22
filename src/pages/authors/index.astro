@@ -21,7 +21,12 @@ const author = authors?.[0]
           <li>
             <AuthorCard author={author} />
             <div class="mt-4">
-              <SocialStatus client:visible />
+              <SocialStatus
+                client:visible
+                discordId={author.data.discordId}
+                displayName={author.data.name}
+                fallbackAvatar={author.data.avatar}
+              />
             </div>
           </li>
         ))}
@@ -49,57 +54,10 @@ const author = authors?.[0]
               <span class="text-foreground font-medium">Nguyen Viet Tin</span> —
               aka <span class="text-foreground font-medium">0xGunn</span>. I’m
               currently studying digital forensics, reverse engineering,
-              open-source intelligence (OSINT), and participating in CTF
-              competitions. Here, I share practical notes, writeups, and lessons
-              learned from these journeys.
+              open-source intelligence, and participating in CTF competitions.
+              Here, I share practical notes, writeups, and lessons learned from
+              these journeys.
             </p>
-          </div>
-
-          <div class="mt-6 grid gap-6 sm:grid-cols-2">
-            <div class="bg-background/40 rounded-xl border p-4">
-              <h3 class="text-foreground/90 text-sm font-semibold">
-                Focus areas
-              </h3>
-              <ul class="text-muted-foreground mt-3 list-disc space-y-1 pl-5 text-sm">
-                <li>Threat hunting & SOC triage</li>
-                <li>Detection engineering (Sigma / SIEM)</li>
-                <li>Incident response & forensics basics</li>
-                <li>Hardening & security operations</li>
-              </ul>
-            </div>
-
-            <div class="bg-background/40 rounded-xl border p-4">
-              <h3 class="text-foreground/90 text-sm font-semibold">
-                Achievements
-              </h3>
-              <ul class="text-muted-foreground mt-3 space-y-2 text-sm">
-                <li class="flex gap-2">
-                  <span class="bg-foreground/40 mt-[2px] inline-block h-2 w-2 rounded-full" />
-                  <span>
-                    <span class="text-foreground font-medium">Third Prize</span>{' '}
-                    — CyberFest 2025
-                    <span class="text-muted-foreground">
-                      {' '}
-                      (co-organized by DevSecOps Solutions Vietnam and DevPlus
-                      Touch Cyber)
-                    </span>
-                  </span>
-                </li>
-                <li class="flex gap-2">
-                  <span class="bg-foreground/40 mt-[2px] inline-block h-2 w-2 rounded-full" />
-                  <span>
-                    <span class="text-foreground font-medium">
-                      Second Prize
-                    </span>{' '}
-                    — NULL POINTER
-                    <span class="text-muted-foreground">
-                      {' '}
-                      (co-organized by CSEM and Sturtle Security Pvt Ltd)
-                    </span>
-                  </span>
-                </li>
-              </ul>
-            </div>
           </div>
         </div>
       </section>

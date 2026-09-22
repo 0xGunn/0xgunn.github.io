@@ -5,7 +5,6 @@ date: 2026-02-11
 tags: ['HackTheBox', 'Machine']
 image: './banner.png'
 authors: ['enscribe']
-password: 'HackTheBox-26.02.11'
 ---
 
 import Callout from '@/components/Callout.astro'
@@ -23,7 +22,6 @@ First, we will perform a port scan to identify **open ports** and **available se
 
 ```shell
 └─$ sudo nmap -p- -T4 10.129.1.149
-[sudo] password for viettin:
 Starting Nmap 7.95 ( https://nmap.org ) at 2026-02-10 22:11 EST
 Nmap scan report for 10.129.1.149
 Host is up (0.066s latency).
@@ -55,7 +53,7 @@ PORT      STATE SERVICE
 
 ```
 
-Looking at this list of ports, it’s quite clear that it’s a **Windows Domain ControllerWindows Domain Controller** machine. We can see some familiar ports such as **53 (DNS)**, **88 (Kerberos)**, **135 (Microsoft RPC)**, **389 (LDAP)**, **1433 (Microsoft SQL Server)** and **445 (SMB)**. We will try logging into the **SMB service** using the provided credentials.
+Looking at this list of ports, it’s quite clear that it’s a **Windows Domain Controller** machine. We can see some familiar ports such as **53 (DNS)**, **88 (Kerberos)**, **135 (Microsoft RPC)**, **389 (LDAP)**, **1433 (Microsoft SQL Server)** and **445 (SMB)**. We will try logging into the **SMB service** using the provided credentials.
 
 ```shell
 $ crackmapexec smb 10.129.1.149 -u john.w -p 'RFulUtONCOL!'

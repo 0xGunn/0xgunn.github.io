@@ -1,157 +1,280 @@
-import React, { useEffect, useState } from 'react'
-import { Music, MessageSquare } from 'lucide-react'
+import { useEffect, useState } from 'react'
 
-// REPLACE THIS WITH YOUR DISCORD USER ID
-const DISCORD_ID = '1234773099476422682' // Placeholder (or put your ID here)
+const DEFAULT_DISCORD_ID = ''
+const POLL_INTERVAL_MS = 10000
 
-interface LanyardData {
-    discord_user: {
-        username: string
-        avatar: string
-        id: string
-        discriminator: string
-        global_name?: string
-    }
-    discord_status: 'online' | 'idle' | 'dnd' | 'offline'
-    listening_to_spotify: boolean
-    spotify: {
-        track_id: string
-        timestamps: {
-            start: number
-            end: number
-        }
-        song: string
-        artist: string
-        album_art_url: string
-        album: string
-    } | null
-    activities: {
-        name: string
-        state: string
-        details: string
-        assets: {
-            large_image: string
-            large_text: string
-        }
-    }[]
+interface Props {
+  discordId?: string
+  displayName?: string
+  fallbackAvatar?: string
 }
 
-export default function SocialStatus() {
-    const [data, setData] = useState<LanyardData | null>(null)
-    const [loading, setLoading] = useState(true)
+interface DiscordActivity {
+  name: string
+  type?: number
+  details?: string
+  state?: string
+  sync_id?: string
+  assets?: {
+    large_image?: string
+    large_text?: string
+    small_image?: string
+    small_text?: string
+  }
+}
 
-    useEffect(() => {
-        // Initial fetch
-        const fetchData = async () => {
-            try {
-                const response = await fetch(`https://api.lanyard.rest/v1/users/${DISCORD_ID}`)
-                const json = await response.json()
-                if (json.success) {
-                    setData(json.data)
-                }
-            } catch (error) {
-                console.error('Failed to fetch Lanyard data', error)
-            } finally {
-                setLoading(false)
-            }
+interface DiscordPresence {
+  status: 'online' | 'idle' | 'dnd' | 'offline'
+  client_status?: {
+    desktop?: DiscordPresence['status']
+    mobile?: DiscordPresence['status']
+    web?: DiscordPresence['status']
+  }
+  activities: DiscordActivity[]
+}
+
+interface DiscordProfile {
+  username: string
+  global_name?: string | null
+  avatarURL?: string | null
+  defaultAvatarURL?: string | null
+}
+
+type StatusBadgesResponse =
+  | DiscordPresence
+  | {
+      error?: {
+        message?: string
+      }
+      message?: string
+    }
+
+type JapiUserResponse =
+  | {
+      data: DiscordProfile
+    }
+  | {
+      error?: string
+      message?: string
+    }
+
+export default function SocialStatus({
+  discordId = DEFAULT_DISCORD_ID,
+  displayName = '0xGunn',
+  fallbackAvatar = 'https://cdn.discordapp.com/embed/avatars/0.png',
+}: Props) {
+  const [presence, setPresence] = useState<DiscordPresence | null>(null)
+  const [profile, setProfile] = useState<DiscordProfile | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let mounted = true
+
+    const fetchData = async () => {
+      if (!discordId) {
+        setPresence(null)
+        setProfile(null)
+        setError('Missing Discord user ID')
+        setLoading(false)
+        return
+      }
+
+      try {
+        try {
+          const profileResponse = await fetch(
+            `https://japi.rest/discord/v1/user/${discordId}`,
+            { cache: 'force-cache' },
+          )
+          const profileJson = (await profileResponse.json()) as JapiUserResponse
+
+          if (mounted && profileResponse.ok && 'data' in profileJson) {
+            setProfile(profileJson.data)
+          }
+        } catch (error) {
+          console.error('Failed to fetch Discord profile', error)
         }
 
-        fetchData()
-
-        // Poll every 10 seconds (Lanyard recommends WebSocket for real-time, but polling is simpler for static-site-like usage locally)
-        const interval = setInterval(fetchData, 10000)
-        return () => clearInterval(interval)
-    }, [])
-
-    if (loading) {
-        return (
-            <div className="bg-background/40 rounded-xl border p-4 animate-pulse h-40">
-                <div className="h-4 w-1/3 bg-muted rounded mb-4"></div>
-                <div className="space-y-3">
-                    <div className="flex items-center gap-3">
-                        <div className="h-10 w-10 rounded-full bg-muted"></div>
-                        <div className="space-y-2 flex-1">
-                            <div className="h-3 w-1/4 bg-muted rounded"></div>
-                            <div className="h-2 w-1/2 bg-muted rounded"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
+        const presenceResponse = await fetch(
+          `https://api.statusbadges.me/presence/${discordId}`,
+          { cache: 'no-store' },
         )
-    }
+        const presenceJson =
+          (await presenceResponse.json()) as StatusBadgesResponse
 
-    // Helper for Status Color
-    const getStatusColor = (status: string) => {
-        switch (status) {
-            case 'online': return 'bg-green-500'
-            case 'idle': return 'bg-yellow-500'
-            case 'dnd': return 'bg-red-500'
-            default: return 'bg-gray-500'
+        if (!presenceResponse.ok || !('status' in presenceJson)) {
+          throw new Error(
+            'message' in presenceJson
+              ? presenceJson.message ||
+                  presenceJson.error?.message ||
+                  'Discord status unavailable'
+              : `Discord status request failed (${presenceResponse.status})`,
+          )
         }
+
+        if (mounted) {
+          setPresence(presenceJson)
+          setError(null)
+        }
+      } catch (error) {
+        console.error('Failed to fetch Discord presence', error)
+        if (mounted) {
+          setPresence(null)
+          setError(
+            error instanceof Error
+              ? error.message
+              : 'Discord status unavailable',
+          )
+        }
+      } finally {
+        if (mounted) {
+          setLoading(false)
+        }
+      }
     }
 
-    const avatarUrl = data?.discord_user.avatar
-        ? `https://cdn.discordapp.com/avatars/${data.discord_user.id}/${data.discord_user.avatar}.png?size=128`
-        : 'https://cdn.discordapp.com/embed/avatars/0.png'
+    fetchData()
 
+    const interval = setInterval(fetchData, POLL_INTERVAL_MS)
+    return () => {
+      mounted = false
+      clearInterval(interval)
+    }
+  }, [discordId])
+
+  if (loading) {
     return (
-        <div className="bg-background/40 rounded-xl border p-4 flex flex-col gap-4">
-            {/* Header */}
-            <h3 className="text-foreground/90 text-sm font-semibold flex items-center gap-2">
-                Live Status
-                <span className={`inline-block h-2 w-2 rounded-full ${data ? getStatusColor(data.discord_status) : 'bg-gray-400'}`}></span>
-            </h3>
-
-            <div className="flex flex-col gap-4">
-                {/* Discord User Info */}
-                <div className="flex items-center gap-3">
-                    <div className="relative shrink-0">
-                        <img
-                            src={avatarUrl}
-                            alt="Discord Avatar"
-                            className="w-10 h-10 rounded-full border-2 border-background shadow-sm"
-                        />
-                        <div className={`absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 border-2 border-background rounded-full ${data ? getStatusColor(data.discord_status) : 'hidden'}`}></div>
-                    </div>
-                    <div className="flex flex-col min-w-0">
-                        <span className="text-foreground font-medium text-sm truncate">
-                            {data?.discord_user.global_name || data?.discord_user.username || 'User'}
-                        </span>
-                        <span className="text-muted-foreground text-xs truncate">
-                            {data?.activities.find(a => a.name !== 'Spotify')?.state || data?.discord_status || 'Offline'}
-                        </span>
-                    </div>
-                </div>
-
-                {/* Spotify Status - Only if listening */}
-                {data?.listening_to_spotify && data.spotify ? (
-                    <div className="flex items-center gap-3 bg-white/5 p-2 rounded-lg border border-white/10">
-                        <div className="relative shrink-0 w-10 h-10 rounded overflow-hidden shadow-sm">
-                            <img
-                                src={data.spotify.album_art_url}
-                                alt="Album Art"
-                                className="w-full h-full object-cover animate-spin-slow"
-                                style={{ animationDuration: '10s' }} // Slow spin for effect
-                            />
-                        </div>
-                        <div className="flex flex-col min-w-0">
-                            <a
-                                href={`https://open.spotify.com/track/${data.spotify.track_id}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-foreground font-medium text-xs truncate hover:underline hover:text-green-500 transition-colors"
-                            >
-                                {data.spotify.song}
-                            </a>
-                            <span className="text-muted-foreground text-xs truncate">
-                                by {data.spotify.artist}
-                            </span>
-                        </div>
-                    </div>
-                ) : (
-                    null
-                )}
+      <div className="bg-background/40 h-40 animate-pulse rounded-xl border p-4">
+        <div className="bg-muted mb-4 h-4 w-1/3 rounded"></div>
+        <div className="space-y-3">
+          <div className="flex items-center gap-3">
+            <div className="bg-muted h-10 w-10 rounded-full"></div>
+            <div className="flex-1 space-y-2">
+              <div className="bg-muted h-3 w-1/4 rounded"></div>
+              <div className="bg-muted h-2 w-1/2 rounded"></div>
             </div>
+          </div>
         </div>
+      </div>
     )
+  }
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'online':
+        return 'bg-green-500'
+      case 'idle':
+        return 'bg-yellow-500'
+      case 'dnd':
+        return 'bg-red-500'
+      default:
+        return 'bg-gray-500'
+    }
+  }
+
+  const getStatusLabel = (status: DiscordPresence['status']) => {
+    switch (status) {
+      case 'online':
+        return 'Online'
+      case 'idle':
+        return 'Idle'
+      case 'dnd':
+        return 'Do not disturb'
+      default:
+        return 'Offline'
+    }
+  }
+
+  const getSpotifyAlbumArt = (activity: DiscordActivity) => {
+    const image = activity.assets?.large_image
+
+    if (!image) {
+      return null
+    }
+
+    return image.startsWith('spotify:')
+      ? `https://i.scdn.co/image/${image.replace('spotify:', '')}`
+      : null
+  }
+
+  const activity = presence?.activities.find(
+    (activity) =>
+      activity.name !== 'Spotify' && (activity.state || activity.details),
+  )
+  const spotify = presence?.activities.find(
+    (activity) => activity.name === 'Spotify' && activity.sync_id,
+  )
+  const spotifyAlbumArt = spotify ? getSpotifyAlbumArt(spotify) : null
+  const avatarUrl =
+    profile?.avatarURL || profile?.defaultAvatarURL || fallbackAvatar
+  const name = profile?.global_name || profile?.username || displayName
+  const statusColor = presence ? getStatusColor(presence.status) : 'bg-gray-500'
+  const statusLabel = presence ? getStatusLabel(presence.status) : 'Unavailable'
+  const subtitle = activity?.state || activity?.details || statusLabel
+
+  return (
+    <div className="bg-background/40 flex flex-col gap-4 rounded-xl border p-4">
+      <h3 className="text-foreground/90 flex items-center gap-2 text-sm font-semibold">
+        Live Status
+        <span
+          className={`inline-block h-2 w-2 rounded-full ${statusColor}`}
+        ></span>
+      </h3>
+
+      <div className="flex flex-col gap-4">
+        <div className="flex items-center gap-3">
+          <div className="relative shrink-0">
+            <img
+              src={avatarUrl}
+              alt="Discord Avatar"
+              className="border-background h-10 w-10 rounded-full border-2 shadow-sm"
+            />
+            <div
+              className={`border-background absolute -right-0.5 -bottom-0.5 h-3.5 w-3.5 rounded-full border-2 ${statusColor}`}
+            ></div>
+          </div>
+          <div className="flex min-w-0 flex-col">
+            <span className="text-foreground truncate text-sm font-medium">
+              {name}
+            </span>
+            <span className="text-muted-foreground truncate text-xs">
+              {subtitle}
+            </span>
+          </div>
+        </div>
+
+        {spotify ? (
+          <div className="flex items-center gap-3 rounded-lg border border-white/10 bg-white/5 p-2">
+            {spotifyAlbumArt ? (
+              <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded shadow-sm">
+                <img
+                  src={spotifyAlbumArt}
+                  alt="Album Art"
+                  className="animate-spin-slow h-full w-full object-cover"
+                  style={{ animationDuration: '10s' }}
+                />
+              </div>
+            ) : null}
+            <div className="flex min-w-0 flex-col">
+              <a
+                href={`https://open.spotify.com/track/${spotify.sync_id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-foreground truncate text-xs font-medium transition-colors hover:text-green-500 hover:underline"
+              >
+                {spotify.details || 'Spotify'}
+              </a>
+              <span className="text-muted-foreground truncate text-xs">
+                {spotify.state || 'Listening now'}
+              </span>
+            </div>
+          </div>
+        ) : null}
+
+        {error ? (
+          <p className="text-muted-foreground text-xs">{error}</p>
+        ) : null}
+      </div>
+    </div>
+  )
 }

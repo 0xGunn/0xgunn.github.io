@@ -7,4 +7,5 @@ website: 'https://0xGunn.github.io'
 twitter: 'https://x.com/vieTin_'
 github: 'https://github.com/0xGunn'
 mail: 'nviettin48@gmail.com'
+discordId: '1234773099476422682'
 ---
